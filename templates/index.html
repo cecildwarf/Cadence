@@ -63,6 +63,7 @@
       <button id="clear-failed" class="secondary">🧹 Clear failed</button>
     </div>
     <p id="queue-msg" class="hint" role="status"></p>
+    <p id="server-status-line" class="hint" role="status">Server: checking…</p>
     <h3>Building / queued</h3>
     <ul class="clean" id="queue-list"></ul>
     <h3>Needs order review</h3>
@@ -214,15 +215,23 @@
     <p class="hint"><strong>Current paths</strong><br>
     Inbox: <code id="cur-inbox">…</code><br>
     Output: <code id="cur-output">…</code></p>
+    <p class="hint"><strong>Mounted folders — what this container can actually see</strong><br>
+    <span id="mounts-list">Loading…</span><br>
+    A running container can't gain a new host folder from Settings — mounts are fixed when it
+    starts. This container mounts one media folder (<code>MEDIA_ROOT</code> — an optional
+    <code>.env</code> override, otherwise the host's <code>/disks</code> — shown above). You can
+    change inbox/output/Processed/Review here, no restart, as long as the
+    new folder is under that mounted folder. A folder outside it is rejected, with a message
+    telling you to change <code>MEDIA_ROOT</code> and run <code>docker compose up -d</code>.</p>
     <label for="s-inbox">Inbox folder — where messy audiobook folders land (server path)</label>
     <div class="row picker-row">
-      <input id="s-inbox" placeholder="/audiobooks/in">
+      <input id="s-inbox" placeholder="/disks/Audiobooks/Inbox">
       <button class="secondary" data-picker="s-inbox" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-inbox" class="chips"></div>
     <label for="s-output">Plex audiobook library folder — finished .m4b files go here (server path)</label>
     <div class="row picker-row">
-      <input id="s-output" placeholder="/audiobooks">
+      <input id="s-output" placeholder="/disks/Audiobooks">
       <button class="secondary" data-picker="s-output" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-output" class="chips"></div>
@@ -263,6 +272,31 @@
     </select>
     <p class="hint">Originals are never deleted automatically at build time — deleting processed
     originals only happens from 🧹 Cleanup, after the safety checks, and only when you confirm.</p>
+    <h3>When to run — back off when the server is busy</h3>
+    <p class="hint">Cadence watches the server and works when it's quiet. If the load gets high
+    or Plex starts transcoding, queued books wait and a running encode pauses (its % freezes)
+    until things have been quiet for a while — then it carries on where it stopped. Nothing is
+    lost and the job is never marked failed for pausing.</p>
+    <label class="checkrow"><input type="checkbox" id="s-backoff" checked> Pause builds when the server gets busy (on by default)</label>
+    <label for="s-load-threshold">Busy when the 1-minute load is above this % of the server's CPU cores</label>
+    <input id="s-load-threshold" type="number" min="10" max="100" step="5" value="70">
+    <label for="s-quiet-grace">Quiet time before a paused build resumes (seconds)</label>
+    <input id="s-quiet-grace" type="number" min="0" max="3600" step="30" value="120">
+    <label for="s-backoff-check">How often to check the server (seconds)</label>
+    <input id="s-backoff-check" type="number" min="10" max="300" step="10" value="30">
+    <label for="s-plex-url">Plex server URL (optional — lets Cadence see Plex transcodes)</label>
+    <input id="s-plex-url" placeholder="http://<server-ip>:32400" autocomplete="off">
+    <label for="s-plex-token">Plex token (optional — stored on the server, never shown in full)</label>
+    <input id="s-plex-token" type="password" autocomplete="off" placeholder="Leave blank if already saved">
+    <div class="row"><button id="plex-test" class="secondary" type="button">🔌 Test Plex connection</button><span id="plex-test-msg" class="hint"></span></div>
+    <p class="hint">Direct play doesn't count — only active Plex transcodes make Cadence back off.
+    Without a Plex URL, the server load alone decides. Find the token in Plex Web: open a library
+    item's XML view, or use the token from your Plex settings — it stays on this server.</p>
+    <label for="s-run-start">Only run between — optional backup (leave empty to run any time)</label>
+    <div class="row"><input id="s-run-start" type="time"> <span>to</span> <input id="s-run-end" type="time"></div>
+    <p class="hint">Outside these hours builds wait in the queue. Inside them, the busy rules above
+    still apply. Uses the timezone above. If the load check ever stops working, this schedule
+    alone decides when builds run.</p>
     <div class="row"><button id="save-settings">💾 Save settings</button></div>
     <p id="settings-msg" class="hint"></p>
   </section>
@@ -273,17 +307,22 @@
   <div class="wizard-card">
     <h2 id="setup-title">👋 First, where are your audiobooks?</h2>
     <p class="hint">Cadence needs two folders on the server. Pick them once —
-    tap a suggestion, browse the server's folders, or type a path. Nothing is assumed.</p>
+    tap a suggestion, browse the server's folders, or type a path. Nothing is assumed.
+    Both folders must be under the media folder mounted into the container
+    (mounted at <code>/disks</code> — <code>MEDIA_ROOT</code> is an optional <code>.env</code>
+    override if your media lives elsewhere) — the picker
+    only shows folders the container can see, and you can change these folders later in
+    ⚙️ Settings with no restart, as long as the new folder is under that same mount.</p>
     <div id="setup-errors" class="banner error hidden"></div>
     <label for="w-inbox">1 · Inbox — where messy audiobook folders land</label>
     <div class="row picker-row">
-      <input id="w-inbox" placeholder="/audiobooks/in" autocomplete="off">
+      <input id="w-inbox" placeholder="/disks/Audiobooks/Inbox" autocomplete="off">
       <button class="secondary" data-picker="w-inbox" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-w-inbox" class="chips"></div>
     <label for="w-output">2 · Output — your Plex audiobook library folder</label>
     <div class="row picker-row">
-      <input id="w-output" placeholder="/audiobooks" autocomplete="off">
+      <input id="w-output" placeholder="/disks/Audiobooks" autocomplete="off">
       <button class="secondary" data-picker="w-output" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-w-output" class="chips"></div>

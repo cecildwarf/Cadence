@@ -16,6 +16,7 @@
   let logJobId = "app";
   let pickerTarget = null;
   let pickerPath = "/";
+  let mountedRoot = ""; // container-side media parent (e.g. /disks) — the picker is rooted here
   let setupDismissed = false;
 
   async function api(path, opts) {
@@ -63,6 +64,7 @@
       + "<p class='meta-line'><strong>" + pct + "%</strong> · " + esc(stage || "") + "</p>";
   }
   function stageText(job) {
+    if (job.paused) return "Paused — server busy";
     const map = { queued: "Queued", scanning: "Scanning", metadata: "Metadata",
       sorting: "Sorting", converting: "Converting", health: "Health check",
       placing: "Placing in Plex",
@@ -91,6 +93,7 @@
   async function loadHealth() {
     const { data } = await api("/api/health");
     if (!data) return;
+    if (data.mounted_root) mountedRoot = data.mounted_root;
     $("inbox-path").textContent = (data.settings && data.settings.inbox_dir) || "(not set yet — finish setup)";
     const errs = data.startup_errors || [];
     const setup = data.setup_required;
@@ -197,7 +200,9 @@
 
   /* --- Server folder picker (used by wizard + Settings) --- */
   document.querySelectorAll("[data-picker]").forEach((b) => {
-    b.addEventListener("click", () => { pickerTarget = b.dataset.picker; openPicker("/"); });
+    // The picker opens at the mounted media root when one is set —
+    // it can only ever offer folders the container can see.
+    b.addEventListener("click", () => { pickerTarget = b.dataset.picker; openPicker(mountedRoot || "/"); });
   });
   function openPicker(path) {
     pickerPath = path || "/";
@@ -233,7 +238,7 @@
     const { data } = await api("/api/folders?path=" + encodeURIComponent(pickerPath));
     if (data && data.ok) { pickerPath = data.parent; loadPicker(); }
   });
-  $("picker-root").addEventListener("click", () => { pickerPath = "/"; loadPicker(); });
+  $("picker-root").addEventListener("click", () => { pickerPath = mountedRoot || "/"; loadPicker(); });
   $("picker-use").addEventListener("click", () => pickFolder(pickerPath));
   $("picker-cancel").addEventListener("click", closePicker);
 
@@ -545,6 +550,13 @@
     if (!data || !data.ok) { qlist.innerHTML = "<li class='jobrow'>Could not load queue.</li>"; return; }
     const queue = data.queue || [];
     const review = data.needs_review || [];
+    const ssEl = $("server-status-line");
+    if (ssEl) {
+      const ss = data.server_status || {};
+      ssEl.textContent = ss.busy
+        ? "🔴 Server: Busy — " + (ss.reason || "high load") + ". Builds wait / pause until it's quiet."
+        : "🟢 Server: Quiet" + (ss.load_summary ? " — " + ss.load_summary : "") + ". Builds run normally.";
+    }
     qlist.innerHTML = "";
     if (!queue.length) qlist.innerHTML = "<li class='jobrow'>Queue is empty — pick folders in Browse to fill it.</li>";
     queue.forEach((j) => {
@@ -557,6 +569,8 @@
         + "<div class='meta-line'>" + esc(j.created || "") + " · " + (j.files || []).length + " file(s)"
         + (j.output_path ? " · " + esc(j.output_path) : "") + "</div>"
         + (j.status === "failed" && j.error ? "<div class='banner error'><strong>⛔ FAILED:</strong> " + esc(j.error) + "</div>" : "")
+        + (j.paused ? "<div class='banner warn'><strong>⏸ Paused — server busy:</strong> " + esc(j.paused_reason || "waiting for the server to quiet down") + ". Resumes automatically; the % stays frozen until then.</div>" : "")
+        + (j.status === "queued" && j.wait_reason ? "<div class='banner warn'><strong>⏳ Waiting:</strong> " + esc(j.wait_reason) + "</div>" : "")
         + (j.originals_warning ? "<div class='banner warn'><strong>⚠ Done with a warning:</strong> " + esc(j.originals_warning) + "</div>" : "")
         + "<div class='row'><button class='secondary' data-edit='1'>✏️ Edit</button>"
         + "<button class='danger' data-cancel='1'>" + (j.status === "building" ? "✕ Cancel" : "✕ Clear") + "</button></div>";
@@ -863,6 +877,8 @@
         + "<div class='meta-line'>" + esc(j.created || "") + " · " + (j.files || []).length + " file(s)"
         + (j.output_path ? " · " + esc(j.output_path) : "") + "</div>"
         + (j.status === "failed" && j.error ? "<div class='banner error'><strong>⛔ FAILED:</strong> " + esc(j.error) + "</div>" : "")
+        + (j.paused ? "<div class='banner warn'><strong>⏸ Paused — server busy:</strong> " + esc(j.paused_reason || "waiting for the server to quiet down") + ". Resumes automatically.</div>" : "")
+        + (j.status === "queued" && j.wait_reason ? "<div class='banner warn'><strong>⏳ Waiting:</strong> " + esc(j.wait_reason) + "</div>" : "")
         + (j.originals_warning ? "<div class='banner warn'><strong>⚠ Done with a warning:</strong> " + esc(j.originals_warning) + "</div>" : "")
         + (j.status === "cancelled" && j.cancelled_reason ? "<div class='meta-line'>✕ Cancelled: " + esc(j.cancelled_reason) + "</div>" : "")
         + (j.status === "needs_health_review" && j.health ? "<div class='banner warn'><strong>🔍 HELD FOR HEALTH REVIEW:</strong> expected "
@@ -951,12 +967,32 @@
   async function loadSettings() {
     const { data } = await api("/api/settings");
     if (!data) return;
+    mountedRoot = data.mounted_root || "";
+    const mountsEl = $("mounts-list");
+    if (mountsEl) {
+      const mounts = data.mounts || [];
+      mountsEl.innerHTML = mounts.length
+        ? mounts.map((m) => esc(m.label) + ": <code>" + esc(m.path) + "</code>"
+            + (m.exists ? (m.writable ? " ✓ readable + writable" : " ✓ readable, not writable")
+                        : " ✕ not found — check the mount")
+            + (m.source ? " (" + esc(m.source) + ")" : "")).join("<br>")
+        : "No mounts reported — the app may not be running in Docker.";
+    }
     $("s-inbox").value = data.inbox_dir || ""; $("s-output").value = data.output_dir || "";
     $("s-processed").value = data.processed_dir || "";
     $("s-review").value = data.review_dir || "";
     $("s-temp").value = data.temp_dir || ""; $("s-bitrate").value = data.bitrate || "96k";
     $("s-audnexus").value = data.audnexus_url || ""; $("s-keep").value = data.keep_originals || "processed";
     $("s-tz").value = data.timezone || "UTC";
+    $("s-backoff").checked = data.backoff_enabled !== false;
+    const numOr = (v, dflt) => (v === null || v === undefined || v === "" ? dflt : v);
+    $("s-load-threshold").value = numOr(data.load_threshold_pct, 70);
+    $("s-quiet-grace").value = numOr(data.quiet_grace_seconds, 120);
+    $("s-backoff-check").value = numOr(data.backoff_check_seconds, 30);
+    $("s-plex-url").value = data.plex_url || "";
+    $("s-plex-token").value = data.plex_token || "";
+    $("s-run-start").value = data.run_start || "";
+    $("s-run-end").value = data.run_end || "";
     $("cur-inbox").textContent = data.inbox_dir || "(not set)";
     $("cur-output").textContent = data.output_dir || "(not set)";
     fillSuggestions($("suggest-inbox"), $("s-inbox"));
@@ -966,8 +1002,15 @@
     fillTzChips($("suggest-tz"), $("s-tz"));
   }
   $("save-settings").addEventListener("click", async () => {
+    const intOr = (v, dflt) => { const n = parseInt(v, 10); return Number.isFinite(n) ? n : dflt; };
     const { data } = await api("/api/settings", { method: "POST", headers: {"Content-Type": "application/json"},
-      body: JSON.stringify({ inbox_dir: $("s-inbox").value, output_dir: $("s-output").value, processed_dir: $("s-processed").value, review_dir: $("s-review").value, temp_dir: $("s-temp").value, bitrate: $("s-bitrate").value, audnexus_url: $("s-audnexus").value, timezone: $("s-tz").value.trim() || "UTC", keep_originals: $("s-keep").value, create_output: $("s-create-output").checked }) });
+      body: JSON.stringify({ inbox_dir: $("s-inbox").value, output_dir: $("s-output").value, processed_dir: $("s-processed").value, review_dir: $("s-review").value, temp_dir: $("s-temp").value, bitrate: $("s-bitrate").value, audnexus_url: $("s-audnexus").value, timezone: $("s-tz").value.trim() || "UTC", keep_originals: $("s-keep").value, create_output: $("s-create-output").checked,
+        backoff_enabled: $("s-backoff").checked,
+        load_threshold_pct: intOr($("s-load-threshold").value, 70),
+        quiet_grace_seconds: intOr($("s-quiet-grace").value, 120),
+        backoff_check_seconds: intOr($("s-backoff-check").value, 30),
+        plex_url: $("s-plex-url").value, plex_token: $("s-plex-token").value,
+        run_start: $("s-run-start").value, run_end: $("s-run-end").value }) });
     if (data && data.ok) {
       $("settings-msg").textContent = "✓ Saved." + ((data.startup_errors || []).length ? " But startup still reports errors — see the banner at the top." : "");
       loadSettings();
@@ -976,6 +1019,18 @@
       $("settings-msg").textContent = "✕ Not saved: " + errs.map((e) => e.message).join(" ");
     }
     loadHealth();
+  });
+  $("plex-test").addEventListener("click", async () => {
+    const msg = $("plex-test-msg");
+    msg.textContent = "Testing…";
+    const { data } = await api("/api/settings/plex-test", { method: "POST", headers: {"Content-Type": "application/json"},
+      body: JSON.stringify({ plex_url: $("s-plex-url").value, plex_token: $("s-plex-token").value }) });
+    if (data && data.ok) {
+      msg.textContent = "✓ Connected: " + data.sessions + " playing, " + data.transcodes + " transcoding"
+        + (data.busy ? " — Cadence would back off right now." : " — quiet.");
+    } else {
+      msg.textContent = "✕ " + ((data && data.error) || "connection failed");
+    }
   });
 
   loadHealth(); loadBrowse(); startQueuePolling();

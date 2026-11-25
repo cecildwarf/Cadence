@@ -49,6 +49,7 @@ from __future__ import annotations
 import json
 import os
 import shutil
+import signal
 import threading
 import time
 import uuid
@@ -58,6 +59,7 @@ from zoneinfo import ZoneInfo
 import requests
 from flask import Flask, jsonify, render_template, request, Response, send_file
 
+import backoff as backoff_mod
 import build as build_mod
 import cleanup as cleanup_mod
 import cadence_logging as flog
@@ -71,6 +73,14 @@ BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 DATA_DIR = os.environ.get("CADENCE_DATA_DIR") or os.path.join(BASE_DIR, "data")
 JOBS_DIR = os.path.join(DATA_DIR, "jobs")
 SETTINGS_PATH = os.path.join(DATA_DIR, "settings.json")
+
+def _env_int(name: str, default: int) -> int:
+    """Int from the environment, or the default when unset/garbage."""
+    try:
+        return int(os.environ.get(name, "") or default)
+    except (TypeError, ValueError):
+        return default
+
 
 # No assumed paths: inbox/output come ONLY from the first-run
 # prompt (saved to data/settings.json) or from the environment
@@ -94,6 +104,22 @@ DEFAULTS = {
     # deleted automatically at build time.
     "keep_originals": os.environ.get("KEEP_ORIGINALS", "processed"),
     "timezone": os.environ.get("TZ", "UTC"),
+    # --- Server-busy backoff (see backoff.py) ----------------------
+    # On by default: when the server gets busy (high host load, or
+    # Plex transcoding), queued builds wait and a running encode is
+    # frozen with SIGSTOP until things have been quiet for the
+    # grace period. Plex fields are empty by default — until they
+    # are filled in, load alone governs.
+    "backoff_enabled": os.environ.get("BACKOFF_ENABLED", "1") not in ("0", "false", "False"),
+    "load_threshold_pct": _env_int("LOAD_THRESHOLD_PCT", 70),
+    "quiet_grace_seconds": _env_int("QUIET_GRACE_SECONDS", 120),
+    "backoff_check_seconds": _env_int("BACKOFF_CHECK_SECONDS", 30),
+    "plex_url": os.environ.get("PLEX_URL", ""),
+    "plex_token": os.environ.get("PLEX_TOKEN", ""),
+    # Optional backup window, "HH:MM"–"HH:MM" in the app timezone.
+    # Empty = no window, run any time.
+    "run_start": os.environ.get("RUN_START", ""),
+    "run_end": os.environ.get("RUN_END", ""),
 }
 
 AUDIO_EXTS = {".mp3", ".m4a", ".m4b", ".flac", ".aac", ".ogg", ".wav"}
@@ -153,6 +179,35 @@ def save_settings(settings: dict) -> None:
         json.dump(settings, fh, indent=2)
 
 
+def _mask_token(token: str) -> str:
+    """Plex token as shown to the UI / API: last 4 chars only,
+    or '' when none is set. The full token is never returned by
+    an endpoint and never written to a log."""
+    tok = (token or "").strip()
+    if not tok:
+        return ""
+    if len(tok) <= 4:
+        return "••••••••"
+    return "••••" + tok[-4:]
+
+
+def _public_settings(settings: dict | None = None) -> dict:
+    """Settings safe to send to a browser: the Plex token masked,
+    plus a flag saying whether one is set at all."""
+    s = dict(settings if settings is not None else SETTINGS)
+    s["plex_token"] = _mask_token(s.get("plex_token") or "")
+    s["plex_token_set"] = bool((settings if settings is not None
+                                else SETTINGS).get("plex_token"))
+    return s
+
+
+def _redacted_settings_for_log(settings: dict | None = None) -> dict:
+    """Settings safe to write to the log: token replaced, not masked."""
+    s = dict(settings if settings is not None else SETTINGS)
+    s["plex_token"] = "<set>" if s.get("plex_token") else "<not set>"
+    return s
+
+
 SETTINGS = load_settings()
 STARTUP_ERRORS: list[dict] = []
 
@@ -189,6 +244,85 @@ def _is_inside(base: str, path: str) -> bool:
     return os.path.commonpath([base_real, target]) == base_real
 
 
+# ---------------------------------------------------------------------------
+# Mounted folders — what the container can actually see
+# ---------------------------------------------------------------------------
+# The honest Docker answer to "can I change folder mappings from
+# Settings?": NO, not for new host folders — a running container
+# cannot gain a new host bind-mount from inside itself; mounts are
+# fixed at `docker compose up` time. What CAN change live in
+# Settings is which subfolder *inside an already-mounted parent*
+# the app uses. So the container mounts ONE media parent
+# (MOUNTED_ROOT, e.g. the container's media mount point — see
+# docker-compose.yml, MEDIA_ROOT on the host) and every media path
+# must live under it. MOUNTED_ROOT is unset when the app runs
+# without Docker (dev / tests), in which case there is no mount
+# restriction to enforce.
+MOUNT_NOT_MOUNTED_MSG = (
+    "That folder isn't mounted into the container. Add it under "
+    "MEDIA_ROOT on the host — change MEDIA_ROOT in .env and run "
+    "`docker compose up -d`, then pick it here."
+)
+
+
+def mounted_root() -> str:
+    """Container-side media parent, or '' when the app runs
+    without Docker and no mount restriction applies."""
+    root = os.environ.get("MOUNTED_ROOT", "").strip()
+    return os.path.realpath(root) if root else ""
+
+
+def mount_error(path: str) -> str | None:
+    """Error message when path is outside the mounted media root,
+    or None when the path is fine (inside the root, or no root is
+    configured). Empty paths are the caller's problem, not this
+    check's — they get their own 'choose a folder' error."""
+    root = mounted_root()
+    if not root or not (path or "").strip():
+        return None
+    if _is_inside(root, path):
+        return None
+    return f"{MOUNT_NOT_MOUNTED_MSG} ({path} is outside {root}.)"
+
+
+def _proc_mount_source(path: str) -> str | None:
+    """Device/source backing a mount point, from /proc/mounts
+    (Linux containers). None when unavailable — never raises."""
+    try:
+        target = os.path.realpath(path)
+        with open("/proc/mounts", encoding="utf-8") as fh:
+            for line in fh:
+                parts = line.split()
+                if len(parts) >= 2 and os.path.realpath(parts[1]) == target:
+                    return parts[0]
+    except OSError:
+        pass
+    return None
+
+
+def mount_info() -> list[dict]:
+    """Live readout of what the container can actually see: the
+    mounted media root (when configured) and the app-data folder.
+    Used by Settings so a wrong path is visible before a job
+    fails against it."""
+    info: list[dict] = []
+    root = mounted_root()
+    if root:
+        info.append({"label": "Media root (mounted folders)",
+                     "path": root,
+                     "source": _proc_mount_source(root),
+                     "exists": os.path.isdir(root),
+                     "readable": os.access(root, os.R_OK),
+                     "writable": os.access(root, os.W_OK)})
+    info.append({"label": "App data (jobs, logs, settings)",
+                 "path": os.path.realpath(DATA_DIR),
+                 "source": _proc_mount_source(DATA_DIR),
+                 "exists": os.path.isdir(DATA_DIR),
+                 "readable": os.access(DATA_DIR, os.R_OK),
+                 "writable": os.access(DATA_DIR, os.W_OK)})
+    return info
+
+
 def validate_paths(inbox: str, output: str, create_output: bool = False) -> list[dict]:
     """Validate the two paths. Returns a list of {field, message}
     errors (empty = valid). Never raises. If create_output is True,
@@ -196,6 +330,16 @@ def validate_paths(inbox: str, output: str, create_output: bool = False) -> list
     errors: list[dict] = []
     inbox = (inbox or "").strip()
     output = (output or "").strip()
+    # Mount check first: a path the container cannot see is the
+    # most useful error — existence/permissions after that are
+    # moot, and a missing folder must never be created outside
+    # the mounted root.
+    for field, value in (("inbox_dir", inbox), ("output_dir", output)):
+        err = mount_error(value)
+        if err:
+            errors.append({"field": field, "message": err})
+    if errors:
+        return errors
     if not inbox:
         errors.append({"field": "inbox_dir",
                        "message": "Choose an inbox (input) folder — "
@@ -241,6 +385,14 @@ def settings_path_errors(settings: dict | None = None) -> list[dict]:
     created on demand at build time."""
     s = settings or SETTINGS
     errors = validate_paths(s.get("inbox_dir", ""), s.get("output_dir", ""))
+    # Custom Processed / Review folders must also live under the
+    # mounted media root — a path outside it can never be reached
+    # by the running container, however valid it looks on the host.
+    for field in ("processed_dir", "review_dir"):
+        custom = (s.get(field) or "").strip()
+        err = mount_error(custom)
+        if err:
+            errors.append({"field": field, "message": err})
     processed = (s.get("processed_dir") or "").strip()
     if processed and not os.path.isdir(processed):
         parent = os.path.dirname(processed.rstrip("/")) or "/"
@@ -530,6 +682,14 @@ def _cancel_job(job_id: str) -> tuple[bool, str]:
             proc = _procs.get(job_id)
         if proc is not None:
             try:
+                # A paused encode is SIGSTOPped: a SIGTERM alone
+                # would sit pending until it is thawed, so thaw it
+                # first, then stop it.
+                if job.get("paused"):
+                    proc.send_signal(signal.SIGCONT)
+            except Exception:
+                pass
+            try:
                 proc.terminate()
             except Exception:
                 pass
@@ -617,6 +777,12 @@ def _queue_loop() -> None:
                         _mark_cancelled(nxt["id"],
                                         "Cancel requested while queued.")
                     else:
+                        ok, gate_reason = _start_gate()
+                        if not ok:
+                            _note_waiting(nxt["id"], gate_reason)
+                            time.sleep(QUEUE_POLL_SECONDS)
+                            continue
+                        _clear_waiting(nxt["id"])
                         _set_job_status(nxt["id"], "building", "scanning", 0)
                         _run_build(nxt["id"])
                     _refresh_queue_positions()
@@ -638,6 +804,11 @@ def _requeue_interrupted_builds() -> None:
             job["stage"] = "queued"
             job["progress_pct"] = 0
             job["cancel_requested"] = False
+            # A restart kills any live ffmpeg process, so a paused
+            # flag from before the restart would be a lie.
+            job["paused"] = False
+            job["paused_reason"] = ""
+            job["wait_reason"] = ""
             save_job(job)
             flog.log_warn(job["id"], "queue",
                           "Build was interrupted by a restart — "
@@ -647,6 +818,284 @@ def _requeue_interrupted_builds() -> None:
 
 _requeue_interrupted_builds()
 _ensure_runner()
+
+
+# ---------------------------------------------------------------------------
+# Server-busy backoff — work when quiet, pause when busy (see backoff.py)
+# ---------------------------------------------------------------------------
+# The monitor thread checks the host load (+ Plex transcodes, when
+# configured) every backoff_check_seconds and keeps the latest
+# verdict in _SERVER_STATUS, which the queue loop and the UI read.
+# It never touches a job record on every tick — only on real
+# transitions (pause / resume / gate), so the log stays readable.
+_SERVER_STATUS: dict = {
+    "busy": False, "reason": "", "quiet": True,
+    "load1": None, "cores": None, "load_pct": None,
+    "mem_available_pct": None, "load_summary": "",
+    "plex_sessions": None, "plex_transcodes": None, "plex_ok": None,
+    "schedule_active": True, "updated_at": None,
+}
+_server_status_lock = threading.Lock()
+_backoff_state = backoff_mod.BackoffState()
+_backoff_thread: threading.Thread | None = None
+_plex_warn_logged = False
+_load_warn_logged = False
+
+
+def _server_status_snapshot() -> dict:
+    with _server_status_lock:
+        return dict(_SERVER_STATUS)
+
+
+def _run_window_ok(now=None) -> tuple[bool, str]:
+    """The optional backup schedule: True when inside the run
+    window (or when no window is set). Timezone-aware, uses the
+    app timezone; a window crossing midnight works."""
+    start = (SETTINGS.get("run_start") or "").strip()
+    end = (SETTINGS.get("run_end") or "").strip()
+    if not start or not end:
+        return True, ""
+    try:
+        tz = ZoneInfo(SETTINGS.get("timezone") or "UTC")
+    except Exception:
+        tz = timezone.utc
+    now = now or datetime.now(tz)
+    if backoff_mod.in_run_window(now, start, end):
+        return True, ""
+    return False, f"outside run hours {start}–{end} ({SETTINGS.get('timezone') or 'UTC'})"
+
+
+def _start_gate() -> tuple[bool, str]:
+    """May the next queued job start? No while the server is busy
+    or outside the run window — the job stays queued with the
+    reason shown in the UI. Load rules still apply inside the
+    window; if load detection is unavailable, the schedule alone
+    governs."""
+    if not SETTINGS.get("backoff_enabled", True):
+        ok, why = _run_window_ok()
+        return (True, "") if ok else (False, f"Waiting — {why}")
+    status = _server_status_snapshot()
+    if status.get("busy"):
+        return False, f"Waiting — server busy ({status.get('reason') or 'high load'})"
+    ok, why = _run_window_ok()
+    if not ok:
+        return False, f"Waiting — {why}"
+    return True, ""
+
+
+def _note_waiting(job_id: str, reason: str) -> None:
+    """Stamp the wait reason on the queued job — once per change,
+    not once per second, so the log doesn't fill up while waiting."""
+    job = load_job(job_id)
+    if job is None or job.get("wait_reason") == reason:
+        return
+    _update_job(job_id, wait_reason=reason)
+    flog.log_info(job_id, "backoff",
+                  f"Not starting yet: {reason}. Job stays queued; "
+                  f"it starts automatically when things quiet down.",
+                  outcome="warning")
+
+
+def _clear_waiting(job_id: str) -> None:
+    job = load_job(job_id)
+    if job is not None and job.get("wait_reason"):
+        _update_job(job_id, wait_reason="")
+
+
+def _pause_job(job_id: str, reason: str) -> bool:
+    """Freeze the live ffmpeg encode with SIGSTOP. The partial
+    .m4b stays on disk and ffmpeg resumes exactly where it stopped
+    on SIGCONT — the job is NOT failed, NOT cancelled, and its %
+    simply freezes. Returns False when no live process exists
+    (job is between stages, not encoding yet)."""
+    with _procs_lock:
+        proc = _procs.get(job_id)
+    if proc is None:
+        return False
+    try:
+        if proc.poll() is not None:
+            return False
+        proc.send_signal(signal.SIGSTOP)
+    except Exception as exc:
+        flog.log_warn(job_id, "backoff",
+                      f"Could not pause the encode (SIGSTOP failed: {exc}) — "
+                      f"letting it finish instead.",
+                      outcome="warning")
+        return False
+    grace = int(SETTINGS.get("quiet_grace_seconds") or 120)
+    _update_job(job_id, paused=True, paused_reason=reason,
+                paused_at=datetime.now(timezone.utc).isoformat())
+    flog.log_info(job_id, "backoff",
+                  f"Paused — server busy: {reason}. Encode frozen "
+                  f"(SIGSTOP); partial output kept, job NOT failed. "
+                  f"Resumes automatically after {grace}s quiet.",
+                  outcome="warning")
+    return True
+
+
+def _resume_job(job_id: str) -> bool:
+    """Thaw a paused encode with SIGCONT — it picks up exactly
+    where it stopped."""
+    with _procs_lock:
+        proc = _procs.get(job_id)
+    if proc is None:
+        # Process is gone (restart / finished meanwhile): just
+        # clear the flag so the job isn't stuck showing paused.
+        _update_job(job_id, paused=False, paused_reason="")
+        return False
+    try:
+        if proc.poll() is not None:
+            _update_job(job_id, paused=False, paused_reason="")
+            return False
+        proc.send_signal(signal.SIGCONT)
+    except Exception as exc:
+        flog.log_warn(job_id, "backoff",
+                      f"Could not resume the encode (SIGCONT failed: {exc}) — "
+                      f"the job stays paused; cancel it and re-queue if needed.",
+                      outcome="warning")
+        return False
+    _update_job(job_id, paused=False, paused_reason="")
+    flog.log_info(job_id, "backoff",
+                  "Resumed — server quiet again. Encode continuing "
+                  "from where it stopped.",
+                  outcome="success")
+    return True
+
+
+def _backoff_tick() -> None:
+    """One check: load + Plex -> busy verdict -> pause/resume.
+    Called by the monitor thread every backoff_check_seconds."""
+    global _plex_warn_logged, _load_warn_logged
+    enabled = bool(SETTINGS.get("backoff_enabled", True))
+    if not enabled:
+        with _server_status_lock:
+            _SERVER_STATUS.update({"busy": False, "reason": "",
+                                   "quiet": True, "load_summary": "",
+                                   "updated_at": datetime.now(timezone.utc).isoformat()})
+        # Switched off mid-pause: thaw anything frozen, or it would
+        # sit paused forever with no monitor left to resume it.
+        for job in [j for j in _queue_order() if j.get("status") == "building"]:
+            if job.get("paused"):
+                _resume_job(job["id"])
+        _backoff_state.paused = False
+        _backoff_state.quiet_since = None
+        _backoff_state.consecutive_busy = 0
+        return
+    reasons: list[str] = []
+    load = None
+    try:
+        load = backoff_mod.read_host_load()
+        _load_warn_logged = False
+    except OSError as exc:
+        if not _load_warn_logged:
+            flog.log_warn(None, "backoff",
+                          f"Could not read host load (/proc unavailable: {exc}) — "
+                          f"backoff falls back to Plex sessions only.",
+                          outcome="warning")
+            _load_warn_logged = True
+    if load is not None:
+        busy, why = backoff_mod.load_is_busy(
+            load, float(SETTINGS.get("load_threshold_pct") or 70))
+        if busy:
+            reasons.append(why)
+    plex_sessions = plex_transcodes = None
+    plex_ok = None
+    plex_url = (SETTINGS.get("plex_url") or "").strip()
+    if plex_url:
+        plex = backoff_mod.fetch_plex_sessions(
+            plex_url, SETTINGS.get("plex_token") or "")
+        plex_ok = bool(plex.get("ok"))
+        plex_sessions = plex.get("sessions") if plex_ok else None
+        plex_transcodes = plex.get("transcodes") if plex_ok else None
+        if plex_ok:
+            _plex_warn_logged = False
+            busy, why = backoff_mod.plex_is_busy(plex)
+            if busy:
+                reasons.append(why)
+        elif not _plex_warn_logged:
+            flog.log_warn(None, "backoff",
+                          f"Plex check failed ({plex.get('error')}) — "
+                          f"ignoring Plex for now, load signal still governs.",
+                          outcome="warning")
+            _plex_warn_logged = True
+    busy = bool(reasons)
+    reason = "; ".join(reasons)
+    window_ok, _why = _run_window_ok()
+    action = _backoff_state.update(busy, reason, time.monotonic())
+    was_busy = _server_status_snapshot().get("busy")
+    with _server_status_lock:
+        _SERVER_STATUS.update({
+            "busy": busy, "reason": reason, "quiet": not busy,
+            "load1": load.get("load1") if load else None,
+            "cores": load.get("cores") if load else None,
+            "load_pct": load.get("load_pct") if load else None,
+            "mem_available_pct": load.get("mem_available_pct") if load else None,
+            "load_summary": backoff_mod.describe_load(load) if load else "",
+            "plex_sessions": plex_sessions,
+            "plex_transcodes": plex_transcodes,
+            "plex_ok": plex_ok,
+            "schedule_active": window_ok,
+            "updated_at": datetime.now(timezone.utc).isoformat(),
+        })
+    if busy and not was_busy:
+        flog.log_info(None, "backoff",
+                      f"Server busy: {reason} — new builds wait, a running "
+                      f"encode pauses.",
+                      outcome="warning")
+    elif not busy and was_busy:
+        flog.log_info(None, "backoff",
+                      "Server quiet again — builds resume once the quiet "
+                      "grace period has passed.",
+                      outcome="success")
+    if action == "pause":
+        building = [j for j in _queue_order() if j.get("status") == "building"]
+        paused_any = False
+        for job in building:
+            if _pause_job(job["id"], reason):
+                paused_any = True
+        if building and not paused_any:
+            flog.log_info(None, "backoff",
+                          f"Server busy ({reason}) — a build is between "
+                          f"stages, so there is no encode to freeze yet; "
+                          f"it pauses as soon as ffmpeg starts.",
+                          outcome="warning")
+    elif action == "resume":
+        for job in [j for j in _queue_order() if j.get("status") == "building"]:
+            if job.get("paused"):
+                _resume_job(job["id"])
+    elif action == "hold" and busy:
+        # Already paused from an earlier busy spell, but a new
+        # encode has started since (e.g. backoff was off when it
+        # began): freeze it too — "hold" must not leave a fresh
+        # encode running through a busy period.
+        for job in [j for j in _queue_order() if j.get("status") == "building"]:
+            if not job.get("paused"):
+                _pause_job(job["id"], reason)
+
+
+def _backoff_loop() -> None:
+    """Monitor thread: check, then sleep. Never dies on an error."""
+    while True:
+        try:
+            _backoff_tick()
+        except Exception as exc:  # noqa: BLE001 — the monitor must not die
+            flog.log_error(None, "backoff",
+                           f"Backoff check failed (will retry): {exc!r}",
+                           outcome="FAIL")
+        interval = int(SETTINGS.get("backoff_check_seconds") or 30)
+        time.sleep(max(10, interval))
+
+
+# The monitor starts with the server (see __main__ below), not at
+# import — importing this module for tests must not start a thread
+# that freezes test encodes on a busy sandbox.
+def _ensure_backoff() -> None:
+    global _backoff_thread
+    if _backoff_thread is not None and _backoff_thread.is_alive():
+        return
+    _backoff_thread = threading.Thread(target=_backoff_loop, daemon=True,
+                                       name="cadence-backoff-monitor")
+    _backoff_thread.start()
 
 
 # ---------------------------------------------------------------------------
@@ -874,19 +1323,31 @@ def health():
                     "startup_errors": STARTUP_ERRORS,
                     "setup_required": status["setup_required"],
                     "setup_errors": status["setup_errors"],
-                    "settings": SETTINGS,
+                    "settings": _public_settings(),
+                    "server_status": _server_status_snapshot(),
                     "queue": {"queued": sum(1 for j in active if j["status"] == "queued"),
                               "building": sum(1 for j in active if j["status"] == "building")},
                     "review_awaiting": len(review_awaiting),
+                    "mounted_root": mounted_root(),
+                    "mounts": mount_info(),
                     "ffmpeg": shutil.which("ffmpeg"),
                     "ffprobe": shutil.which("ffprobe")})
 
 
 @app.route("/api/folders")
 def folders_api():
-    """Server-side folder picker: list subfolders of an absolute
-    server path (phone-friendly — tap to descend, no typing)."""
-    path = os.path.realpath(request.args.get("path", "/") or "/")
+    """Server-side folder picker: list subfolders of a server path
+    (phone-friendly — tap to descend, no typing).
+
+    The picker is rooted at the mounted media root when one is
+    configured (Docker): a request outside it is clamped back to
+    the root, and "Up" never escapes above it — the picker can
+    only ever offer folders the container can actually see."""
+    root = mounted_root()
+    requested = os.path.realpath(request.args.get("path", "") or "")
+    path = requested or (root or "/")
+    if root and not _is_inside(root, path):
+        path = root
     if not os.path.isabs(path) or not os.path.isdir(path):
         return jsonify({"ok": False,
                         "error": f"Folder not found on this server: {path}"}), 404
@@ -906,20 +1367,39 @@ def folders_api():
                 audio = 0
             entries.append({"name": name, "path": full, "audio_files": audio})
     parent = os.path.dirname(path.rstrip("/")) or "/"
+    if root and not _is_inside(root, parent):
+        parent = root
     return jsonify({"ok": True, "path": path, "parent": parent,
-                    "entries": entries})
+                    "root": root or "/", "entries": entries})
 
 
 @app.route("/api/folders/suggestions")
 def folder_suggestions():
     """One-tap path suggestions for the setup wizard: generic
     candidates that actually exist on this server, plus anything
-    already configured. Never assumes a particular disk layout."""
-    candidates = ["/audiobooks", "/audiobooks/in", "/audiobooks/out",
-                  "/audiobooks/processed", "/audiobooks/review",
-                  "/data", "/data/audiobooks", "/data/inbox", "/data/processed",
-                  "/data/review",
-                  "/media", "/mnt", "/srv", "/home"]
+    already configured. Never assumes a particular disk layout.
+
+    When a mounted media root is configured (Docker), suggestions
+    come from under it only — a suggestion the container cannot
+    see would be a trap, not a shortcut."""
+    root = mounted_root()
+    if root:
+        candidates = [root,
+                      os.path.join(root, "Audiobooks"),
+                      os.path.join(root, "Audiobooks", "Inbox"),
+                      os.path.join(root, "Audiobooks", "Processed"),
+                      os.path.join(root, "Audiobooks", "Review"),
+                      os.path.join(root, "audiobooks"),
+                      os.path.join(root, "audiobooks", "in"),
+                      os.path.join(root, "audiobooks", "out"),
+                      os.path.join(root, "audiobooks", "processed"),
+                      os.path.join(root, "audiobooks", "review")]
+    else:
+        candidates = ["/audiobooks", "/audiobooks/in", "/audiobooks/out",
+                      "/audiobooks/processed", "/audiobooks/review",
+                      "/data", "/data/audiobooks", "/data/inbox", "/data/processed",
+                      "/data/review",
+                      "/media", "/mnt", "/srv", "/home"]
     for env_key in ("INBOX_DIR", "OUTPUT_DIR"):
         val = os.environ.get(env_key)
         if val:
@@ -947,8 +1427,13 @@ def folder_suggestions():
         else:
             label = "Folder on this server"
         suggestions.append({"path": cand, "label": label})
-    suggestions.append({"path": "/", "label": "Server root — browse from here"})
-    return jsonify({"ok": True, "suggestions": suggestions})
+    if root:
+        suggestions.append({"path": root,
+                            "label": "Mounted media root — browse from here"})
+    else:
+        suggestions.append({"path": "/", "label": "Server root — browse from here"})
+    return jsonify({"ok": True, "suggestions": suggestions,
+                    "mounted_root": root or ""})
 
 
 @app.route("/api/settings", methods=["GET", "POST"])
@@ -956,9 +1441,12 @@ def settings_api():
     global SETTINGS, STARTUP_ERRORS
     if request.method == "GET":
         status = setup_status()
-        return jsonify({**SETTINGS,
+        return jsonify({**_public_settings(),
                         "setup_required": status["setup_required"],
-                        "setup_errors": status["setup_errors"]})
+                        "setup_errors": status["setup_errors"],
+                        "mounted_root": mounted_root(),
+                        "mounts": mount_info(),
+                        "server_status": _server_status_snapshot()})
     data = request.get_json(force=True) or {}
     was_required = setup_status()["setup_required"]
     merged = dict(SETTINGS)
@@ -967,6 +1455,44 @@ def settings_api():
                 "audnexus_url", "keep_originals", "timezone"):
         if key in data and str(data[key]).strip():
             merged[key] = str(data[key]).strip()
+    # --- Backoff settings (see backoff.py) --------------------------
+    if "backoff_enabled" in data:
+        merged["backoff_enabled"] = bool(data["backoff_enabled"])
+    for key, lo, hi in (("load_threshold_pct", 10, 100),
+                        ("quiet_grace_seconds", 0, 3600),
+                        ("backoff_check_seconds", 10, 300)):
+        if key in data:
+            try:
+                val = int(data[key])
+            except (TypeError, ValueError):
+                val = None
+            if val is None or not lo <= val <= hi:
+                errors_pre = [{"field": key,
+                               "message": f"{key} must be a whole number "
+                                          f"between {lo} and {hi}."}]
+                flog.log_warn(None, "settings",
+                              "Settings save rejected: "
+                              + errors_pre[0]["message"], outcome="FAIL")
+                return jsonify({"ok": False, "errors": errors_pre,
+                                "error": errors_pre[0]["message"]}), 400
+            merged[key] = val
+    if "plex_url" in data:
+        merged["plex_url"] = str(data["plex_url"] or "").strip()
+    if "run_start" in data:
+        merged["run_start"] = str(data["run_start"] or "").strip()
+    if "run_end" in data:
+        merged["run_end"] = str(data["run_end"] or "").strip()
+    # Plex token: the UI sends back the masked value when the user
+    # didn't touch the field — that means "keep the saved token".
+    # An empty value clears it; anything else replaces it.
+    if "plex_token" in data:
+        val = str(data["plex_token"] or "")
+        if not val:
+            merged["plex_token"] = ""
+        elif val == _mask_token(SETTINGS.get("plex_token") or ""):
+            merged["plex_token"] = SETTINGS.get("plex_token") or ""
+        else:
+            merged["plex_token"] = val.strip()
     # Explicitly clearing the Processed / Review path means "use the default".
     if "processed_dir" in data and not str(data["processed_dir"]).strip():
         merged["processed_dir"] = ""
@@ -981,9 +1507,18 @@ def settings_api():
     errors = validate_paths(merged.get("inbox_dir", ""),
                             merged.get("output_dir", ""),
                             create_output=create_output)
+    # Processed / Review folders must live under the mounted media
+    # root too — checked BEFORE any create attempt, so a path
+    # outside the mount is never created (or silently accepted).
+    for field in ("processed_dir", "review_dir"):
+        custom = (merged.get(field) or "").strip()
+        err = mount_error(custom)
+        if err:
+            errors.append({"field": field, "message": err})
     # Processed folder: create it on save when its parent allows it.
     processed = (merged.get("processed_dir") or "").strip()
-    if processed and not os.path.isdir(processed):
+    if processed and not os.path.isdir(processed) and \
+            not any(e["field"] == "processed_dir" for e in errors):
         parent = os.path.dirname(processed.rstrip("/")) or "/"
         if os.path.isdir(parent) and os.access(parent, os.W_OK):
             try:
@@ -1005,7 +1540,8 @@ def settings_api():
                        "message": "Review folder must be OUTSIDE the Plex "
                                   f"output folder — otherwise Plex would scan "
                                   f"held, unchecked files."})
-    elif review and not os.path.isdir(review):
+    elif review and not os.path.isdir(review) and \
+            not any(e["field"] == "review_dir" for e in errors):
         parent = os.path.dirname(review.rstrip("/")) or "/"
         if os.path.isdir(parent) and os.access(parent, os.W_OK):
             try:
@@ -1025,6 +1561,19 @@ def settings_api():
         errors.append({"field": "timezone",
                        "message": f"Unknown timezone: {tz}. Use a valid "
                                   f"timezone name (e.g. UTC, America/New_York)."})
+    # Plex URL must be a real http(s) URL when set; the run window
+    # must be HH:MM or empty (empty = no window).
+    plex_url = (merged.get("plex_url") or "").strip()
+    if plex_url and not plex_url.startswith(("http://", "https://")):
+        errors.append({"field": "plex_url",
+                       "message": "Plex server URL must start with http:// "
+                                  "or https://, e.g. http://<server-ip>:32400."})
+    for field in ("run_start", "run_end"):
+        val = (merged.get(field) or "").strip()
+        if val and backoff_mod.parse_hhmm(val) is None:
+            errors.append({"field": field,
+                           "message": f"Run window {field} must be HH:MM "
+                                      f"(24-hour, e.g. 22:00) or empty."})
     if errors:
         # Rejected, clearly — bad paths are never silently saved.
         flog.log_warn(None, "settings",
@@ -1040,7 +1589,11 @@ def settings_api():
                       f"Timezone {SETTINGS.get('timezone')!r} not applied — using UTC.",
                       outcome="warning")
     STARTUP_ERRORS = run_startup_checks()
-    flog.log_info(None, "settings", f"Settings updated: {SETTINGS}", outcome="success")
+    # The token is never written to the log, even masked-out here
+    # it is replaced entirely — a log line must not carry it.
+    flog.log_info(None, "settings",
+                  f"Settings updated: {_redacted_settings_for_log()}",
+                  outcome="success")
     if was_required and not setup_status()["setup_required"]:
         flog.log_info(None, "setup",
                       f"First-run setup completed: inbox={SETTINGS['inbox_dir']} "
@@ -1050,10 +1603,49 @@ def settings_api():
                       f"timezone={SETTINGS.get('timezone', 'UTC')}",
                       outcome="success")
     status = setup_status()
-    return jsonify({"ok": True, "settings": SETTINGS,
+    return jsonify({"ok": True, "settings": _public_settings(),
                     "startup_errors": STARTUP_ERRORS,
                     "setup_required": status["setup_required"],
-                    "setup_errors": status["setup_errors"]})
+                    "setup_errors": status["setup_errors"],
+                    "mounted_root": mounted_root(),
+                    "mounts": mount_info()})
+
+
+@app.route("/api/server-status")
+def server_status_api():
+    """Latest backoff verdict: quiet or busy, and why. The Queue
+    tab polls this with the queue (2s); the monitor refreshes it
+    every backoff_check_seconds."""
+    status = _server_status_snapshot()
+    window_ok, _why = _run_window_ok()
+    return jsonify({"ok": True, "server_status": status,
+                    "backoff_enabled": bool(SETTINGS.get("backoff_enabled", True)),
+                    "schedule_active": window_ok,
+                    "run_start": SETTINGS.get("run_start") or "",
+                    "run_end": SETTINGS.get("run_end") or ""})
+
+
+@app.route("/api/settings/plex-test", methods=["POST"])
+def plex_test_api():
+    """Test the Plex connection with the URL/token from the
+    request (or the saved ones when the fields are blank). Reports
+    how many sessions are playing and how many are transcoding —
+    and never returns the token."""
+    data = request.get_json(force=True) or {}
+    url = (str(data.get("plex_url") or "").strip()
+           or (SETTINGS.get("plex_url") or "").strip())
+    token = data.get("plex_token")
+    if token is None or token == "" or token == _mask_token(SETTINGS.get("plex_token") or ""):
+        token = SETTINGS.get("plex_token") or ""
+    else:
+        token = str(token).strip()
+    result = backoff_mod.fetch_plex_sessions(url, token)
+    if not result.get("ok"):
+        return jsonify({"ok": False, "error": result.get("error")}), 400
+    busy, why = backoff_mod.plex_is_busy(result)
+    return jsonify({"ok": True, "sessions": result["sessions"],
+                    "transcodes": result["transcodes"],
+                    "busy": busy, "reason": why})
 
 
 # ---------------------------------------------------------------------------
@@ -1272,6 +1864,7 @@ def queue_api():
     review = [j for j in list_jobs() if j.get("status") == "created"]
     review.sort(key=lambda j: j.get("created", ""))
     return jsonify({"ok": True, "queue": queue, "needs_review": review,
+                    "server_status": _server_status_snapshot(),
                     "counts": {"queued": sum(1 for j in queue if j["status"] == "queued"),
                                "building": sum(1 for j in queue if j["status"] == "building"),
                                "needs_review": len(review)}})
@@ -2112,6 +2705,16 @@ def _run_build(job_id: str):
         _mark_cancelled(job_id, str(exc) or "Cancelled by user.")
     except Exception as exc:  # noqa: BLE001 — every failure lands in the log + UI
         if _cancelled():
+            # Cancel landed while ffmpeg was being stopped from
+            # outside (e.g. a paused encode): no partial staging
+            # file may be left behind for Plex to pick up.
+            stage_path = locals().get("stage_path")
+            if stage_path:
+                try:
+                    if os.path.exists(stage_path):
+                        os.remove(stage_path)
+                except OSError:
+                    pass
             _mark_cancelled(job_id, "Cancelled by user.")
             return
         reason = str(exc) or repr(exc)
@@ -2191,5 +2794,6 @@ def last_errors_api():
 
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", "8285"))
+    _ensure_backoff()
     flog.log_info(None, "startup", f"Cadence starting on 0.0.0.0:{port}")
     app.run(host="0.0.0.0", port=port)

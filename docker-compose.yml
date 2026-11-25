@@ -24,16 +24,24 @@ services:
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
       - PORT=${PORT:-8285}
+      # The container-side media parent. The volume below mounts
+      # your host media folder here — every inbox/output/
+      # Processed/Review path you pick in the web UI must live
+      # under it. You never need to edit this line; set
+      # MEDIA_ROOT in .env instead.
+      - MOUNTED_ROOT=/disks
       # Paths are set in the first-run wizard in the web UI after
       # first start. You can also set them here in .env instead:
-      #   INBOX_DIR  = where messy audiobook folders land (input)
-      #   OUTPUT_DIR = your Plex audiobook library folder (output)
+      #   INBOX_DIR  = where messy audiobook folders land (input),
+      #                a folder under /disks, e.g. /disks/Audiobooks/Inbox
+      #   OUTPUT_DIR = your Plex audiobook library folder (output),
+      #                a folder under /disks, e.g. /disks/Audiobooks
       # Leave them unset to be asked on first open.
       - INBOX_DIR=${INBOX_DIR:-}
       - OUTPUT_DIR=${OUTPUT_DIR:-}
       # Optional overrides for the folders the wizard defaults to
       # <inbox>/Processed and <inbox>/Review. Leave unset to use
-      # those defaults; if set, use the matching container path.
+      # those defaults; if set, use a path under /disks.
       - PROCESSED_DIR=${PROCESSED_DIR:-}
       - REVIEW_DIR=${REVIEW_DIR:-}
       - TEMP_DIR=${TEMP_DIR:-/app/data/temp}
@@ -43,12 +51,19 @@ services:
     volumes:
       # Logs + jobs + settings survive container restarts (data/logs/).
       - ./data:/app/data
-      # Your media folders, mounted read/write: Cadence reads the
-      # inbox and writes finished .m4b files into the output
-      # folder. Point these at YOUR host paths, e.g.:
-      #   INBOX_HOST_DIR=/path/to/audiobooks/in
-      #   OUTPUT_HOST_DIR=/path/to/audiobooks
-      # and set INBOX_DIR / OUTPUT_DIR (above) to the matching
-      # container paths /audiobooks/in and /audiobooks.
-      - ${INBOX_HOST_DIR:-/audiobooks/in}:/audiobooks/in:rw
-      - ${OUTPUT_HOST_DIR:-/audiobooks}:/audiobooks:rw
+      # ONE media mount: your whole media tree, read/write.
+      # MEDIA_ROOT is the ONE folder to set in .env — the host
+      # folder that holds all your media (on the example server
+      # it is /disks; elsewhere it might be /media, /data, or a
+      # NAS mount). It is mounted at /disks inside the container.
+      #
+      # Why one mount? A running container cannot gain a new host
+      # folder from inside itself — mounts are fixed when the
+      # container starts. With one parent mounted, you can change
+      # inbox/output/Processed/Review freely in Settings (no
+      # restart) as long as the new folder is under /disks. A
+      # folder outside /disks is rejected in Settings with a plain
+      # message telling you to change MEDIA_ROOT and recreate the
+      # container (`docker compose up -d`).
+      #
+      - ${MEDIA_ROOT:-/disks}:/disks:rw
