@@ -1,0 +1,365 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Cadence</title>
+<link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+<header>
+  <h1>🎵 Cadence</h1>
+  <p>MP3s in, one Plex-ready .m4b out — sorted first, then merged.</p>
+  <p class="hint">Your phone is a remote control here: this app browses folders
+  <strong>on the server</strong>. No file upload from your phone is needed.</p>
+</header>
+
+<nav class="tabs" aria-label="Sections">
+  <button data-tab="browse" class="secondary">📂 Browse</button>
+  <button data-tab="queue" class="secondary">⏳ Queue <span id="queue-count-badge" class="badge queued hidden"></span></button>
+  <button data-tab="review" class="secondary">🔍 Review <span id="review-count-badge" class="badge needs_health_review hidden"></span></button>
+  <button data-tab="cleanup" class="secondary">🧹 Cleanup</button>
+  <button data-tab="job" class="secondary">📖 Current book</button>
+  <button data-tab="jobs" class="secondary">📋 Jobs</button>
+  <button data-tab="logs" class="secondary">📜 Logs</button>
+  <button data-tab="settings" class="secondary">⚙️ Settings</button>
+</nav>
+
+<main>
+  <div id="startup-banner"></div>
+  <div id="review-banner"></div>
+  <div id="last-error-banner"></div>
+
+  <!-- BROWSE -->
+  <section class="card" id="tab-browse">
+    <h2>1 · Choose book folders or files</h2>
+    <p class="hint">Folders under the inbox (<span id="inbox-path">…</span>).
+    Files are read on the server — nothing uploads from this device.</p>
+    <p class="hint"><strong>How it queues:</strong> 1 file → queued automatically, no review.
+    More than 1 file → review the order first. Empty folder → no job, you'll be told why.</p>
+    <div class="row">
+      <button id="browse-up" class="secondary">⬆ Up</button>
+      <button id="browse-refresh" class="secondary">↻ Refresh</button>
+    </div>
+    <p id="browse-crumb" class="meta-line"></p>
+    <div class="row bulkbar">
+      <label class="checkrow"><input type="checkbox" id="select-all"> Select all on this page</label>
+      <button id="queue-selected">⏳ Queue selected</button>
+      <button id="queue-all" class="secondary">⏳ Queue all in this folder</button>
+    </div>
+    <p id="bulk-msg" class="hint" role="status"></p>
+    <ul class="clean" id="browse-list"></ul>
+  </section>
+
+  <!-- QUEUE -->
+  <section class="card hidden" id="tab-queue">
+    <h2>Queue — one build at a time</h2>
+    <p class="hint">Books build in order, one at a time, so a small server never
+    runs two encodes at once. Every row shows live progress: a bar, a % and the current stage.
+    Tap <strong>Edit</strong> to fix a queued book's title or order before it starts.</p>
+    <div class="row">
+      <button id="queue-refresh" class="secondary">↻ Refresh</button>
+      <button id="clear-finished" class="secondary">🧹 Clear finished</button>
+      <button id="clear-failed" class="secondary">🧹 Clear failed</button>
+    </div>
+    <p id="queue-msg" class="hint" role="status"></p>
+    <h3>Building / queued</h3>
+    <ul class="clean" id="queue-list"></ul>
+    <h3>Needs order review</h3>
+    <p class="hint">Multi-file books land here first — open one, check the auto-sort, then confirm to join the queue.</p>
+    <ul class="clean" id="review-list"></ul>
+  </section>
+
+  <!-- HEALTH REVIEW -->
+  <section class="card hidden" id="tab-review">
+    <h2>🔍 Review — health-held books</h2>
+    <p class="hint">After every build, Cadence checks the finished file against
+    the book's published length and chapter list. A file that fails or looks
+    wrong never goes to Plex — it waits here, in the Review folder, until you
+    decide. <strong>Approve</strong> places it in Plex anyway (and records
+    what you overrode) — only then do the originals move to Processed.
+    <strong>Reject</strong> deletes the held file — the originals stay
+    in their original source folder, so you can re-process the book
+    from there.</p>
+    <div class="row">
+      <button id="review-refresh" class="secondary">↻ Refresh</button>
+    </div>
+    <p id="review-msg" class="hint" role="status"></p>
+    <ul class="clean" id="review-list"></ul>
+  </section>
+
+  <!-- CLEANUP -->
+  <section class="card hidden" id="tab-cleanup">
+    <h2>Cleanup — free disk space, safely</h2>
+    <p class="hint">Processed originals are only listed as safe to delete when the finished
+    .m4b exists in Plex, plays fine, matches the originals' length within 2%, and its job
+    finished Done. Anything unsure lands in "Needs review" with the reason why — never on the
+    delete list. Nothing is deleted until you confirm.</p>
+    <p class="hint"><strong>Reclaimable: <span id="cleanup-total">…</span></strong></p>
+    <div class="row">
+      <button id="cleanup-refresh" class="secondary">↻ Refresh list</button>
+      <label class="checkrow"><input type="checkbox" id="cleanup-show-kept"> Show kept items</label>
+    </div>
+    <p id="cleanup-msg" class="hint" role="status"></p>
+    <h3>Safe to delete</h3>
+    <ul class="clean" id="cleanup-safe-list"></ul>
+    <div class="row">
+      <button id="cleanup-delete" class="danger">🗑 Delete safe items</button>
+    </div>
+    <h3>Needs review — not safe to delete</h3>
+    <ul class="clean" id="cleanup-review-list"></ul>
+    <h3>Kept items</h3>
+    <p class="hint">Books you chose to keep — they stay in Processed and never appear on the delete list until you un-keep them.</p>
+    <ul class="clean" id="cleanup-kept-list"></ul>
+  </section>
+
+  <!-- CURRENT BOOK / JOB -->
+  <section class="card hidden" id="tab-job">
+    <h2>2 · Review order &amp; metadata</h2>
+    <p class="hint">Auto-sort did its best guess below. <strong>Check it, then fix anything wrong
+    before you build</strong> — drag a row (mouse), or use the ↑ ↓ buttons or “move to #” on your phone.
+    Buttons always work; drag is optional.</p>
+    <div id="job-empty"><p class="hint">No book picked yet — choose a folder in Browse first, or open a queued book from the Queue tab.</p></div>
+    <div id="job-body" class="hidden">
+      <p id="job-title" class="filename"></p>
+      <p id="job-status" class="meta-line"></p>
+      <div id="job-progress-wrap" class="hidden">
+        <div class="progress" role="progressbar" aria-label="Build progress"><div class="fill" id="job-progress-fill"></div></div>
+        <p class="meta-line"><span id="job-progress-pct">0%</span> · <span id="job-progress-stage">Queued</span></p>
+      </div>
+      <div id="job-error" class="banner error hidden"></div>
+      <div id="job-health" class="hidden"></div>
+      <div id="sort-warnings"></div>
+
+      <h3>Metadata</h3>
+      <label for="asin">ASIN (Audible ID, e.g. B0C5NYVMW4)</label>
+      <div class="row">
+        <input id="asin" placeholder="B0…" autocomplete="off">
+        <button id="lookup-btn">🔍 Look up</button>
+      </div>
+      <p id="lookup-msg" class="hint"></p>
+      <div class="grid2">
+        <div><label for="f-title">Title</label><input id="f-title"></div>
+        <div><label for="f-author">Author</label><input id="f-author"></div>
+        <div><label for="f-narrator">Narrator</label><input id="f-narrator"></div>
+        <div><label for="f-series">Series</label><input id="f-series"></div>
+        <div><label for="f-series-pos">Series #</label><input id="f-series-pos"></div>
+        <div><label for="f-year">Year</label><input id="f-year"></div>
+        <div><label for="f-genre">Genre</label><input id="f-genre"></div>
+        <div><label for="f-asin">ASIN (saved)</label><input id="f-asin"></div>
+      </div>
+      <label for="f-desc">Description</label>
+      <textarea id="f-desc" rows="3"></textarea>
+      <img id="cover-preview" class="cover hidden" alt="Cover preview">
+      <p id="cover-msg" class="hint"></p>
+
+      <h3>Files — confirmed order (<span id="file-count">0</span>)</h3>
+      <ul class="clean" id="file-list"></ul>
+      <div class="row">
+        <button id="build-btn">🔨 Build .m4b (joins the queue)</button>
+        <button id="cancel-job-btn" class="danger hidden">✕ Cancel this job</button>
+        <button id="refresh-job-btn" class="secondary">↻ Refresh status</button>
+      </div>
+      <h3>Progress</h3>
+      <pre class="log" id="job-log">No build running yet.</pre>
+      <div class="row">
+        <button id="copy-job-log" class="secondary">📋 Copy log</button>
+        <button id="copy-job-error" class="secondary">📋 Copy last error only</button>
+        <a id="text-job-log" href="#" target="_blank"><button class="secondary" type="button">📄 Plain-text view</button></a>
+        <button id="download-job-log" class="secondary">⬇ Download .log</button>
+      </div>
+    </div>
+  </section>
+
+  <!-- JOBS -->
+  <section class="card hidden" id="tab-jobs">
+    <h2>Jobs</h2>
+    <p class="hint">Every job, newest first. A failed job shows its exact reason here — tap it for the full log. Use ✕ to clear a job from the list (never deletes source files or finished books).</p>
+    <div class="row">
+      <button id="jobs-refresh" class="secondary">↻ Refresh</button>
+      <button id="jobs-clear-finished" class="secondary">🧹 Clear finished</button>
+    </div>
+    <ul class="clean" id="jobs-list"></ul>
+  </section>
+
+  <!-- LOGS -->
+  <section class="card hidden" id="tab-logs">
+    <h2>Logs</h2>
+    <p class="hint">Logs live on the server under <code>data/logs/</code> and survive restarts.
+    <strong>Copy</strong> is the fastest way to send one from your phone — paste it straight into chat.</p>
+    <div class="row">
+      <select id="log-job-select" aria-label="Choose job log"></select>
+      <button id="log-load" class="secondary">Load log</button>
+    </div>
+    <div class="row">
+      <select id="log-level" aria-label="Filter by level">
+        <option value="">All levels</option><option>INFO</option><option>WARN</option><option>ERROR</option>
+      </select>
+      <input id="log-search" placeholder="Search log text…" aria-label="Search log text">
+    </div>
+    <div class="row">
+      <button id="copy-log" class="secondary">📋 Copy log</button>
+      <button id="copy-last-error" class="secondary">📋 Copy last error only</button>
+      <a id="text-log-link" href="/logs/app/text" target="_blank"><button class="secondary" type="button">📄 Plain-text view</button></a>
+      <button id="download-log" class="secondary">⬇ Download .log</button>
+    </div>
+    <pre class="log" id="log-view">Pick a job log (or the global log) above.</pre>
+    <p id="copy-msg" class="hint" role="status"></p>
+  </section>
+
+  <!-- SETTINGS -->
+  <section class="card hidden" id="tab-settings">
+    <h2>Settings</h2>
+    <p class="hint">Saved to <code>data/settings.json</code> on the server. Paths are server paths, not this device's.</p>
+    <p class="hint"><strong>Current paths</strong><br>
+    Inbox: <code id="cur-inbox">…</code><br>
+    Output: <code id="cur-output">…</code></p>
+    <label for="s-inbox">Inbox folder — where messy audiobook folders land (server path)</label>
+    <div class="row picker-row">
+      <input id="s-inbox" placeholder="/audiobooks/in">
+      <button class="secondary" data-picker="s-inbox" type="button">📂 Browse…</button>
+    </div>
+    <div id="suggest-inbox" class="chips"></div>
+    <label for="s-output">Plex audiobook library folder — finished .m4b files go here (server path)</label>
+    <div class="row picker-row">
+      <input id="s-output" placeholder="/audiobooks">
+      <button class="secondary" data-picker="s-output" type="button">📂 Browse…</button>
+    </div>
+    <div id="suggest-output" class="chips"></div>
+    <label class="checkrow"><input type="checkbox" id="s-create-output"> Create the output folder if it doesn't exist yet</label>
+    <p class="hint">Changing the output folder only affects future builds — books already placed stay where they are.</p>
+    <label for="s-processed">Processed folder — finished books' original files are moved here (server path)</label>
+    <div class="row picker-row">
+      <input id="s-processed" placeholder="<inbox>/Processed">
+      <button class="secondary" data-picker="s-processed" type="button">📂 Browse…</button>
+    </div>
+    <div id="suggest-processed" class="chips"></div>
+    <p class="hint">Leave empty for the default: a <code>Processed</code> folder inside your inbox.
+    Layout inside: <code>Processed/&lt;Author&gt;/&lt;Book&gt;/</code> with the original filenames kept.
+    Nothing moves here until a book is successfully in Plex — a failed, cancelled, held, or
+    rejected book leaves its originals in the source folder. To re-process a book that
+    failed or was held, start it again from its source folder; a book that already
+    succeeded lives under Processed.</p>
+    <label for="s-review">Review folder — health-held files wait here for your decision (server path)</label>
+    <div class="row picker-row">
+      <input id="s-review" placeholder="<inbox>/Review">
+      <button class="secondary" data-picker="s-review" type="button">📂 Browse…</button>
+    </div>
+    <div id="suggest-review" class="chips"></div>
+    <p class="hint">Leave empty for the default: a <code>Review</code> folder inside your inbox,
+    next to Processed. It must stay <strong>outside</strong> your Plex output folder, or Plex
+    would scan held, unchecked files. Approve moves a held file into Plex; Reject deletes it.</p>
+    <label for="s-temp">Temp folder</label><input id="s-temp">
+    <label for="s-bitrate">AAC bitrate</label>
+    <select id="s-bitrate"><option>64k</option><option>96k</option><option>128k</option></select>
+    <label for="s-audnexus">Audnexus mirror URL</label><input id="s-audnexus">
+    <label for="s-tz">Timezone (for log timestamps, e.g. UTC)</label>
+    <input id="s-tz" placeholder="UTC" autocomplete="off">
+    <div id="suggest-tz" class="chips"></div>
+    <label for="s-keep">Original files after a successful build</label>
+    <select id="s-keep">
+      <option value="processed">Move to Processed/&lt;Author&gt;/&lt;Book&gt;/ (default)</option>
+      <option value="keep">Keep in place</option>
+    </select>
+    <p class="hint">Originals are never deleted automatically at build time — deleting processed
+    originals only happens from 🧹 Cleanup, after the safety checks, and only when you confirm.</p>
+    <div class="row"><button id="save-settings">💾 Save settings</button></div>
+    <p id="settings-msg" class="hint"></p>
+  </section>
+</main>
+
+<!-- FIRST-RUN SETUP WIZARD -->
+<div id="setup-wizard" class="wizard hidden" role="dialog" aria-modal="true" aria-labelledby="setup-title">
+  <div class="wizard-card">
+    <h2 id="setup-title">👋 First, where are your audiobooks?</h2>
+    <p class="hint">Cadence needs two folders on the server. Pick them once —
+    tap a suggestion, browse the server's folders, or type a path. Nothing is assumed.</p>
+    <div id="setup-errors" class="banner error hidden"></div>
+    <label for="w-inbox">1 · Inbox — where messy audiobook folders land</label>
+    <div class="row picker-row">
+      <input id="w-inbox" placeholder="/audiobooks/in" autocomplete="off">
+      <button class="secondary" data-picker="w-inbox" type="button">📂 Browse…</button>
+    </div>
+    <div id="suggest-w-inbox" class="chips"></div>
+    <label for="w-output">2 · Output — your Plex audiobook library folder</label>
+    <div class="row picker-row">
+      <input id="w-output" placeholder="/audiobooks" autocomplete="off">
+      <button class="secondary" data-picker="w-output" type="button">📂 Browse…</button>
+    </div>
+    <div id="suggest-w-output" class="chips"></div>
+    <label class="checkrow"><input type="checkbox" id="w-create-output"> Create the output folder if it doesn't exist yet</label>
+    <label for="w-processed">3 · Processed folder (optional) — where finished books' originals are kept</label>
+    <div class="row picker-row">
+      <input id="w-processed" placeholder="Leave empty: <inbox>/Processed" autocomplete="off">
+      <button class="secondary" data-picker="w-processed" type="button">📂 Browse…</button>
+    </div>
+    <div id="suggest-w-processed" class="chips"></div>
+    <label for="w-review">4 · Review folder (optional) — health-held files wait here for your decision</label>
+    <div class="row picker-row">
+      <input id="w-review" placeholder="Leave empty: <inbox>/Review" autocomplete="off">
+      <button class="secondary" data-picker="w-review" type="button">📂 Browse…</button>
+    </div>
+    <div id="suggest-w-review" class="chips"></div>
+    <p class="hint">Must stay outside your Plex output folder, or Plex would scan held files.</p>
+    <label for="w-tz">5 · Timezone (for log timestamps)</label>
+    <input id="w-tz" value="UTC" autocomplete="off">
+    <div id="suggest-w-tz" class="chips"></div>
+    <p class="hint">You can change all of this later in ⚙️ Settings. The output folder only affects future builds.</p>
+    <div class="row">
+      <button id="setup-save">💾 Save &amp; start using Cadence</button>
+      <button id="setup-skip" class="secondary" type="button">Set up later</button>
+    </div>
+  </div>
+</div>
+
+<!-- REVIEW CONFIRM MODAL (Approve / Reject a held file) -->
+<div id="review-modal" class="wizard hidden" role="dialog" aria-modal="true" aria-labelledby="review-modal-title">
+  <div class="wizard-card">
+    <h2 id="review-modal-title">🔍 Review decision</h2>
+    <p id="review-modal-summary" class="hint"></p>
+    <div id="review-modal-diagnoses"></div>
+    <label for="review-modal-note">Note (optional — saved with the decision)</label>
+    <input id="review-modal-note" placeholder="e.g. Listened to the end of Ch 3, it is all there" autocomplete="off">
+    <div class="row">
+      <button id="review-modal-confirm" class="danger">✓ Confirm</button>
+      <button id="review-modal-cancel" class="secondary" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- DELETE CONFIRM MODAL (Cleanup) -->
+<div id="delete-modal" class="wizard hidden" role="dialog" aria-modal="true" aria-labelledby="delete-title">
+  <div class="wizard-card">
+    <h2 id="delete-title">🗑 Delete processed originals?</h2>
+    <p id="delete-summary" class="hint"></p>
+    <ul class="clean" id="delete-list"></ul>
+    <p class="hint">This deletes <strong>only</strong> the processed source files listed above.
+    The finished .m4b files in Plex are <strong>not</strong> touched. This cannot be undone.</p>
+    <div class="row">
+      <button id="delete-confirm" class="danger">✓ Yes, delete these</button>
+      <button id="delete-cancel" class="secondary" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<!-- SERVER FOLDER PICKER -->
+<div id="folder-picker" class="wizard hidden" role="dialog" aria-modal="true" aria-label="Pick a folder on the server">
+  <div class="wizard-card">
+    <h2>📂 Pick a folder on the server</h2>
+    <p id="picker-crumb" class="meta-line"></p>
+    <div class="row">
+      <button id="picker-up" class="secondary" type="button">⬆ Up</button>
+      <button id="picker-root" class="secondary" type="button">Server root</button>
+    </div>
+    <ul class="clean" id="picker-list"></ul>
+    <div class="row">
+      <button id="picker-use">✓ Use this folder</button>
+      <button id="picker-cancel" class="secondary" type="button">Cancel</button>
+    </div>
+  </div>
+</div>
+
+<footer>Cadence · LAN-only — do not expose to the internet · Logs: data/logs/</footer>
+<script src="/static/app.js"></script>
+</body>
+</html>

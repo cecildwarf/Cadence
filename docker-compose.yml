@@ -1,0 +1,51 @@
+services:
+  cadence:
+    build:
+      context: .
+      args:
+        # Files the container writes are owned by this UID:GID
+        # (default 1000:1000 — set PUID/PGID in .env to match the
+        # user your media server runs as).
+        PUID: ${PUID:-1000}
+        PGID: ${PGID:-1000}
+    container_name: cadence
+    restart: unless-stopped
+    ports:
+      # Cadence uses 8285. LAN-only: do NOT publish this port on
+      # your router, and do NOT expose it to the internet.
+      - "8285:8285"
+    environment:
+      # Timezone for log timestamps (default UTC). Set to your
+      # location, e.g. America/New_York, Europe/London.
+      - TZ=${TZ:-UTC}
+      - PUID=${PUID:-1000}
+      - PGID=${PGID:-1000}
+      - PORT=8285
+      # Paths are set in the first-run wizard in the web UI after
+      # first start. You can also set them here in .env instead:
+      #   INBOX_DIR  = where messy audiobook folders land (input)
+      #   OUTPUT_DIR = your Plex audiobook library folder (output)
+      # Leave them unset to be asked on first open.
+      - INBOX_DIR=${INBOX_DIR:-}
+      - OUTPUT_DIR=${OUTPUT_DIR:-}
+      # Optional overrides for the folders the wizard defaults to
+      # <inbox>/Processed and <inbox>/Review. Leave unset to use
+      # those defaults; if set, use the matching container path.
+      - PROCESSED_DIR=${PROCESSED_DIR:-}
+      - REVIEW_DIR=${REVIEW_DIR:-}
+      - TEMP_DIR=${TEMP_DIR:-/app/data/temp}
+      - AAC_BITRATE=${AAC_BITRATE:-96k}
+      - AUDNEXUS_URL=${AUDNEXUS_URL:-https://api.audnexus.com}
+      - KEEP_ORIGINALS=${KEEP_ORIGINALS:-processed}
+    volumes:
+      # Logs + jobs + settings survive container restarts (data/logs/).
+      - ./data:/app/data
+      # Your media folders, mounted read/write: Cadence reads the
+      # inbox and writes finished .m4b files into the output
+      # folder. Point these at YOUR host paths, e.g.:
+      #   INBOX_HOST_DIR=/path/to/audiobooks/in
+      #   OUTPUT_HOST_DIR=/path/to/audiobooks
+      # and set INBOX_DIR / OUTPUT_DIR (above) to the matching
+      # container paths /audiobooks/in and /audiobooks.
+      - ${INBOX_HOST_DIR:-/audiobooks/in}:/audiobooks/in:rw
+      - ${OUTPUT_HOST_DIR:-/audiobooks}:/audiobooks:rw

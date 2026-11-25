@@ -1,0 +1,143 @@
+/* Cadence — mobile-first.
+   Base styles are the PHONE layout (single column, >=44px touch
+   targets, >=16px text). Desktop widens it via the media query at
+   the bottom. One UI, both form factors — no separate mobile site. */
+:root {
+  --bg: #0f1115; --card: #171a21; --card2: #1e222c;
+  --text: #f2f3f5; --muted: #a7adb8; --border: #2c313d;
+  --accent: #7c5cff; --accent2: #9d86ff;
+  --ok: #3fbf6f; --warn: #e0a63c; --err: #e5534b;
+  --radius: 12px;
+}
+* { box-sizing: border-box; }
+html { -webkit-text-size-adjust: 100%; }
+body {
+  margin: 0; background: var(--bg); color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 17px; line-height: 1.5;
+}
+header { padding: 16px 16px 8px; }
+header h1 { margin: 0; font-size: 26px; }
+header p { margin: 4px 0 0; color: var(--muted); font-size: 15px; }
+main { padding: 0 12px 48px; max-width: 1060px; margin: 0 auto; }
+section.card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 16px; margin: 12px 0;
+}
+h2 { font-size: 20px; margin: 0 0 8px; }
+h3 { font-size: 17px; margin: 16px 0 8px; }
+p.hint { color: var(--muted); font-size: 15px; margin: 4px 0 12px; }
+/* Touch targets: every button / input is at least 44px tall. */
+button, input, select, textarea {
+  font-size: 17px; min-height: 44px; border-radius: 10px;
+}
+button {
+  background: var(--accent); color: #fff; border: 0;
+  padding: 10px 16px; cursor: pointer; font-weight: 600;
+  min-width: 44px; touch-action: manipulation;
+}
+button.secondary { background: var(--card2); color: var(--text); border: 1px solid var(--border); }
+button.danger { background: #5a2320; color: #ffb4ae; border: 1px solid #7a2e29; }
+button:disabled { opacity: .5; cursor: default; }
+button.copied { background: var(--ok); }
+input, select, textarea {
+  width: 100%; background: var(--card2); color: var(--text);
+  border: 1px solid var(--border); padding: 10px 12px; margin: 4px 0 10px;
+}
+label { font-weight: 600; display: block; margin-top: 8px; }
+.row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.row > * { flex: 1 1 auto; }
+.row > button { flex: 0 1 auto; }
+nav.tabs { display: flex; gap: 8px; padding: 8px 12px; overflow-x: auto; }
+nav.tabs button { flex: 1 0 auto; white-space: nowrap; }
+.banner {
+  border-radius: var(--radius); padding: 14px 16px; margin: 12px 0;
+  font-size: 16px; border: 1px solid;
+}
+.banner.error { background: #3a1d1b; border-color: var(--err); color: #ffd2cf; }
+.banner.warn { background: #332a15; border-color: var(--warn); color: #ffe1a1; }
+.banner.ok { background: #173324; border-color: var(--ok); color: #b9e8c9; }
+.hidden { display: none !important; }
+/* File / job lists */
+ul.clean { list-style: none; margin: 0; padding: 0; }
+li.entry, li.filerow, li.jobrow {
+  background: var(--card2); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px; margin: 8px 0;
+}
+li.filerow.dragging { opacity: .5; border-color: var(--accent2); }
+.filename { font-weight: 600; word-break: break-word; }
+.meta-line { color: var(--muted); font-size: 15px; }
+.badge {
+  display: inline-block; padding: 4px 10px; border-radius: 999px;
+  font-size: 14px; font-weight: 700; margin-right: 6px;
+}
+.badge.high { background: #173324; color: #7ed79e; }
+.badge.medium { background: #332a15; color: #ffcf7d; }
+.badge.low { background: #3a1d1b; color: #ff9d97; }
+.badge.done { background: #173324; color: #7ed79e; }
+.badge.failed { background: #3a1d1b; color: #ff9d97; }
+.badge.building, .badge.created { background: #1d2a44; color: #a9c4ff; }
+.badge.queued { background: #1d2a44; color: #a9c4ff; }
+.badge.cancelled { background: #2c313d; color: var(--muted); }
+.badge.needs_health_review { background: #332a15; color: #ffcf7d; }
+.badge.rejected { background: #3a1d1b; color: #ff9d97; }
+/* Health chapter table — scrolls sideways on a phone, full width on PC. */
+.tablewrap { overflow-x: auto; margin: 8px 0; }
+table.health { border-collapse: collapse; width: 100%; font-size: 15px; min-width: 560px; }
+table.health th, table.health td { border: 1px solid var(--border); padding: 8px 10px; text-align: left; vertical-align: top; }
+table.health th { background: var(--card); }
+table.health tr.short td { background: #332a15; }
+table.health tr.missing td { background: #3a1d1b; }
+/* Queue progress bars — real %, driven by the backend. */
+.progress {
+  background: #0a0c10; border: 1px solid var(--border);
+  border-radius: 999px; height: 18px; overflow: hidden; margin: 8px 0 2px;
+}
+.progress .fill {
+  height: 100%; background: var(--accent); width: 0%;
+  transition: width .5s ease; border-radius: 999px;
+}
+/* Bulk-select rows + checkboxes (44px rows, 24px boxes). */
+.checkrow { display: flex; align-items: center; gap: 10px; font-weight: 600; }
+.checkrow input[type="checkbox"] { width: 24px; height: 24px; min-height: 24px; margin: 0; flex: 0 0 auto; }
+.bulkbar { background: var(--card2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 12px; margin: 8px 0; }
+.picker-row input { flex: 1 1 auto; }
+/* Suggestion chips (one-tap path picks). */
+.chips { display: flex; gap: 8px; flex-wrap: wrap; margin: 0 0 12px; }
+button.chip { min-height: 44px; font-size: 15px; padding: 8px 12px; white-space: normal; text-align: left; word-break: break-all; }
+/* First-run wizard + folder picker overlays (full-screen on a phone). */
+.wizard {
+  position: fixed; inset: 0; z-index: 50; overflow-y: auto;
+  background: rgba(5, 6, 9, .92); padding: 16px 12px;
+  display: flex; align-items: flex-start; justify-content: center;
+}
+.wizard-card {
+  background: var(--card); border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 20px; width: 100%; max-width: 640px;
+  margin: 24px auto;
+}
+.wizard-card h2 { font-size: 22px; }
+.wizard-card input { font-size: 17px; }
+.file-controls { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 10px; align-items: center; }
+.file-controls button { padding: 8px 12px; min-height: 44px; }
+.move-to { display: flex; gap: 6px; align-items: center; }
+.move-to input { width: 76px; margin: 0; text-align: center; }
+pre.log {
+  background: #0a0c10; color: #d6dae2; border: 1px solid var(--border);
+  border-radius: var(--radius); padding: 12px; font-size: 14px;
+  line-height: 1.45; white-space: pre-wrap; word-wrap: break-word;
+  max-height: 420px; overflow-y: auto; margin: 8px 0;
+}
+pre.log .err-line { color: #ff9d97; }
+.cover { max-width: 180px; border-radius: 8px; display: block; margin: 8px 0; }
+.grid2 { display: grid; grid-template-columns: 1fr; gap: 12px; }
+footer { color: var(--muted); font-size: 14px; padding: 16px; text-align: center; }
+/* Desktop: wider table-like layout, same pages, same controls. */
+@media (min-width: 761px) {
+  body { font-size: 16px; }
+  header h1 { font-size: 30px; }
+  .grid2 { grid-template-columns: 1fr 1fr; }
+  li.filerow { display: grid; grid-template-columns: 1fr auto; gap: 4px 16px; }
+  .file-controls { grid-column: 1 / -1; }
+  pre.log { max-height: 560px; }
+}

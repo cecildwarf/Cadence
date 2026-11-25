@@ -1,0 +1,9 @@
+# Build context — never bake local state into the image.
+data/
+__pycache__/
+*.pyc
+.venv/
+.git/
+.pytest_cache/
+.env
+tests/
