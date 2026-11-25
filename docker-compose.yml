@@ -11,16 +11,19 @@ services:
     container_name: cadence
     restart: unless-stopped
     ports:
-      # Cadence uses 8285. LAN-only: do NOT publish this port on
-      # your router, and do NOT expose it to the internet.
-      - "8285:8285"
+      # Cadence listens on $PORT (default 8285). LAN-only: do NOT
+      # publish this port on your router, and do NOT expose it to
+      # the internet. If 8285 is already in use on your server,
+      # set PORT in .env (e.g. PORT=8286) — the mapping and the
+      # app both follow it; the app never silently picks another.
+      - "${PORT:-8285}:${PORT:-8285}"
     environment:
       # Timezone for log timestamps (default UTC). Set to your
       # location, e.g. America/New_York, Europe/London.
       - TZ=${TZ:-UTC}
       - PUID=${PUID:-1000}
       - PGID=${PGID:-1000}
-      - PORT=8285
+      - PORT=${PORT:-8285}
       # Paths are set in the first-run wizard in the web UI after
       # first start. You can also set them here in .env instead:
       #   INBOX_DIR  = where messy audiobook folders land (input)

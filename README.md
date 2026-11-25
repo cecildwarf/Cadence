@@ -97,6 +97,51 @@ Point Plex at the output folder as a separate **Music** library (the
 community audiobook setup), with "Prefer local metadata" on, then
 rescan the library after a build finishes.
 
+## Will it clash? (running next to Plex / Tdarr / audiobookshelf)
+
+Cadence is designed to sit quietly alongside the usual home-server
+stack. It was audited against a server running Plex (Docker),
+Tdarr v3 (8265/8266), audiobookshelf, tautulli, bragibooks,
+what-to-watch, Home Assistant, Music Assistant, ESPHome, Curatarr,
+and Watchtower — no shared ports, names, networks, or folders
+except the inbox/output folders you point it at.
+
+| Thing | Cadence | Clash? |
+|---|---|---|
+| Port | **8285** by default (`$PORT`, overridable in `.env`) | No — distinct from Plex 32400, Tdarr 8265/8266, audiobookshelf 13378, tautulli 8181, Home Assistant 8123. Tdarr's 8265/8266 are the closest numbers and still different. |
+| Container / image | Container `cadence`, image built from this repo (`cadence-cadence`) | No — no other service in the stack uses that name. |
+| Network | Default bridge network, no `--network host` | No — nothing else binds its ports. |
+| GPU | None — CPU-only ffmpeg, no `/dev/dri`, no QSV/VAAPI, no `privileged` | No — it can't fight Tdarr for Quick Sync. |
+| Volumes | `./data:/app/data` (own jobs/logs/settings, next to `docker-compose.yml` — not `~/tdarr`) + the inbox/output folders you configure | Only the folders you configure. It writes finished `.m4b` + `cover.jpg` into the output tree and moves originals to Processed — it never touches Plex/Tdarr config, databases, or media outside those folders, and Cleanup only ever deletes inside Processed. |
+| CPU / jobs | One build at a time (single queue runner, no parallel jobs), one CPU ffmpeg encode | Light — a single AAC encode. If Tdarr is mid-transcode, queueing books just waits its turn; pause the queue from the UI if you want it fully idle. |
+
+If the port is already bound when you start it, Docker refuses to
+start the container (`port is already allocated`) and the app itself
+fails fast with "address already in use" — it never silently takes
+another port.
+
+**Pre-flight check — run this on your server before the first
+`docker compose up` (and again any time you suspect a clash):**
+
+```bash
+docker ps --format '{{.Names}} {{.Ports}}'
+docker compose config | grep -A2 -i "ports\|container_name"
+```
+
+Look for `8285` in the first command's output. If another container
+already uses it, set a different port in `.env` and restart:
+
+```bash
+# in .env:
+PORT=8286
+docker compose up -d --build
+# then open http://<server-ip>:8286
+```
+
+> Note: this audit was done against the documented stack above, not
+> by logging into your server — the live `docker ps` check on your
+> server is the final step before `docker compose up`.
+
 ## First-run setup
 
 On first open — or if a saved path later breaks (disk unmounted,
@@ -436,8 +481,9 @@ for a home server that is also running Plex.
 
 ## Notes / decisions
 
-- **Port 8285** — picked as the default; change it in
-  `docker-compose.yml` + the URL if it clashes with anything.
+- **Port 8285** — picked as the default; change it with `PORT` in
+  `.env` (the compose mapping and the app both follow it) + the URL
+  if it clashes with anything. See "Will it clash?" below.
 - **Inbox / output paths** — no defaults are assumed. They come from
   the first-run wizard or `.env` (see Install above).
 - **Repo URL** — `github.com/cecildwarf/cadence` is the
