@@ -6,7 +6,8 @@
 # What it does, in order (and it stops with a clear error if any
 # step fails — it never half-updates):
 #   1. git pull --ff-only   — fetch the latest code from GitHub
-#   2. docker compose up -d --build
+#   2. make ./data owned by the container user (PUID:PGID), then
+#      docker compose up -d --build
 #                            — rebuild the image from the new code
 #                              and recreate the container
 #   3. docker compose ps + a health check that the app answers
@@ -25,6 +26,49 @@
 #   git pull --ff-only && docker compose up -d --build
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# The container runs as PUID:PGID (default 1000:1000), but Docker
+# creates a missing bind-mount folder (./data) as root on first
+# `docker compose up` — then the app cannot write /app/data/logs
+# and the container restart-loops with
+# "Permission denied: '/app/data/logs'". Make ./data exist and
+# owned by the container user *before* compose runs. Idempotent:
+# does nothing when ownership is already right, and never touches
+# the contents of ./data. If the container is already
+# restart-looping on this error, fixing the ownership is enough —
+# the restart policy retries it and the next attempt succeeds.
+ensure_data_dir() {
+    local puid pgid owner
+    puid="${PUID:-}"
+    pgid="${PGID:-}"
+    if [ -f .env ]; then
+        # .env values, like compose's: shell env wins over .env.
+        if [ -z "$puid" ]; then
+            puid="$(grep -E '^PUID=' .env | tail -n 1 | cut -d= -f2- | tr -d ' "')" || true
+        fi
+        if [ -z "$pgid" ]; then
+            pgid="$(grep -E '^PGID=' .env | tail -n 1 | cut -d= -f2- | tr -d ' "')" || true
+        fi
+    fi
+    puid="${puid:-1000}"
+    pgid="${pgid:-1000}"
+    mkdir -p ./data
+    owner="$(stat -c '%u:%g' ./data 2>/dev/null || echo "?")"
+    if [ "$owner" = "${puid}:${pgid}" ]; then
+        return 0
+    fi
+    echo "    ./data is owned by ${owner} but the container runs as ${puid}:${pgid} — fixing ownership..."
+    if [ "$(id -u)" = "0" ]; then
+        chown -R "${puid}:${pgid}" ./data
+    elif sudo chown -R "${puid}:${pgid}" ./data; then
+        :
+    else
+        echo "ERROR: could not change ownership of ./data (owned by ${owner})."
+        echo "Run this on the host, then run this script again:"
+        echo "  sudo chown -R ${puid}:${pgid} ./data"
+        exit 1
+    fi
+}
 
 # Port: $PORT wins, then .env, then the 8285 default.
 PORT="${PORT:-8285}"
@@ -58,6 +102,7 @@ fi
 echo ""
 echo "==> Step 2/3: rebuilding the container from the new code..."
 echo "    (./data — settings, jobs, logs — is a mounted volume and is kept.)"
+ensure_data_dir
 docker compose up -d --build
 
 echo ""

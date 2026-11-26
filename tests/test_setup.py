@@ -104,7 +104,7 @@ def test_output_folder_can_be_created_on_save(client):
         "inbox_dir": str(inbox), "output_dir": str(missing_out),
         "timezone": "UTC"})
     assert resp.status_code == 400
-    assert "Create it" in resp.get_json()["error"]
+    assert "Create output folder if missing" in resp.get_json()["error"]
     # With the flag: created and accepted.
     resp = c.post("/api/settings", json={
         "inbox_dir": str(inbox), "output_dir": str(missing_out),

@@ -48,7 +48,7 @@
       try { ok = document.execCommand("copy"); } catch (e) { ok = false; }
       document.body.removeChild(ta);
     }
-    if (msgEl) msgEl.textContent = ok ? "✓ Copied — paste it into chat." : "Copy failed — use the plain-text view and long-press > Select All > Copy.";
+    if (msgEl) msgEl.textContent = ok ? "✓ Copied." : "Copy failed — use Plain-text view.";
     return ok;
   }
   function flashCopied(btn) {
@@ -121,9 +121,7 @@
     if (reviewCount > 0) { rbadge.textContent = String(reviewCount); rbadge.classList.remove("hidden"); }
     else rbadge.classList.add("hidden");
     $("review-banner").innerHTML = reviewCount > 0
-      ? '<div class="banner warn"><strong>🔍 ' + reviewCount + ' book(s) need a health review:</strong> '
-        + 'a finished file did not match its metadata, so it is held in the Review folder — '
-        + 'not in Plex — until you approve or reject it. '
+      ? '<div class="banner warn"><strong>🔍 ' + reviewCount + ' book(s) need a health review</strong> — held in the Review folder, not in Plex. '
         + '<button class="secondary" id="banner-review-btn" type="button">Open Review</button></div>'
       : "";
     const rbtn = $("banner-review-btn");
@@ -138,7 +136,7 @@
   }
 
   /* --- First-run setup wizard --- */
-  const TZ_CHIPS = ["UTC", "America/New_York", "America/Chicago", "America/Los_Angeles", "Europe/London", "Australia/Sydney"];
+  const TZ_CHIPS = ["UTC", "America/New_York", "America/Chicago", "America/Denver", "America/Phoenix", "America/Los_Angeles", "Europe/London", "Australia/Sydney"];
   function fillTzChips(el, inputEl) {
     el.innerHTML = "";
     TZ_CHIPS.forEach((tz) => {
@@ -188,7 +186,7 @@
     if (data && data.ok) {
       hideSetup(); setupDismissed = false;
       await loadHealth(); loadBrowse();
-      alert("✓ Setup saved. Inbox: " + data.settings.inbox_dir + "\nOutput: " + data.settings.output_dir);
+      alert("✓ Setup saved.");
     } else {
       const errs = (data && data.errors) || [{ message: (data && data.error) || "Save failed." }];
       const errBox = $("setup-errors");
@@ -328,7 +326,7 @@
     }
     currentJob = data.job;
     if (data.route === "auto_queue") {
-      alert("✓ Queued automatically — 1 file, no sorting needed. Watch it in the Queue tab.");
+      alert("✓ Queued automatically.");
       showTab("queue");
     } else {
       showTab("job");
@@ -361,16 +359,15 @@
     const hb = $("job-health");
     if (j.status === "needs_health_review" && j.health) {
       hb.classList.remove("hidden");
-      hb.innerHTML = "<div class='banner warn'><strong>🔍 HELD FOR HEALTH REVIEW:</strong> expected "
+      hb.innerHTML = "<div class='banner warn'><strong>🔍 Held for health review:</strong> expected "
         + esc(j.health.expected_total || "?") + ", got " + esc(j.health.actual_total || "?") + ".<ul>"
-        + (j.health.diagnoses || []).map((d) => "<li>" + esc(d) + "</li>").join("") + "</ul>"
-        + "Open the 🔍 Review tab to approve it or reject it.</div>";
+        + (j.health.diagnoses || []).map((d) => "<li>" + esc(d) + "</li>").join("") + "</ul></div>";
     } else hb.classList.add("hidden");
     $("cancel-job-btn").classList.toggle("hidden", !["queued", "building", "created"].includes(j.status));
     $("build-btn").textContent = j.status === "created" ? "🔨 Build .m4b (joins the queue)" : "🔨 Build .m4b (joins the queue)";
     const warns = j.warnings || [];
     $("sort-warnings").innerHTML = warns.length
-      ? '<div class="banner warn"><strong>Auto-sort warnings — please check:</strong><ul>' + warns.map((w) => "<li>" + esc(w) + "</li>").join("") + "</ul></div>" : "";
+      ? '<div class="banner warn"><strong>Auto-sort warnings:</strong><ul>' + warns.map((w) => "<li>" + esc(w) + "</li>").join("") + "</ul></div>" : "";
     const m = j.metadata || {};
     $("f-title").value = m.title || ""; $("f-author").value = m.author || "";
     $("f-narrator").value = m.narrator || ""; $("f-series").value = m.series || "";
@@ -378,7 +375,7 @@
     $("f-genre").value = m.genre || ""; $("f-asin").value = m.asin || "";
     $("f-desc").value = m.description || ""; $("asin").value = m.asin || "";
     const cover = $("cover-preview");
-    if (m.cover_url) { cover.src = m.cover_url; cover.classList.remove("hidden"); $("cover-msg").textContent = "Cover from audnexus — will be embedded in the .m4b."; }
+    if (m.cover_url) { cover.src = m.cover_url; cover.classList.remove("hidden"); $("cover-msg").textContent = "Cover will be embedded in the .m4b."; }
     else { cover.classList.add("hidden"); $("cover-msg").textContent = ""; }
     $("file-count").textContent = String((j.files || []).length);
     $("text-job-log").href = "/logs/" + j.id + "/text";
@@ -464,17 +461,17 @@
 
   $("lookup-btn").addEventListener("click", async () => {
     const asin = $("asin").value.trim();
-    $("lookup-msg").textContent = "Looking up… (audnexus)";
+    $("lookup-msg").textContent = "Looking up…";
     const { data } = await api("/api/jobs/" + currentJob.id + "/metadata", {
       method: "POST", headers: {"Content-Type": "application/json"},
       body: JSON.stringify({ asin, title: $("f-title").value.trim(), author: $("f-author").value.trim() }),
     });
     if (data && data.ok) {
       currentJob.metadata = data.metadata;
-      $("lookup-msg").textContent = "✓ Found: " + data.metadata.title + " — you can still edit every field below.";
+      $("lookup-msg").textContent = "✓ Found: " + data.metadata.title + ".";
       renderJob();
     } else {
-      $("lookup-msg").textContent = "✕ Lookup failed: " + ((data && data.error) || "unknown error") + " — edit the fields manually and build anyway.";
+      $("lookup-msg").textContent = "✕ Lookup failed: " + ((data && data.error) || "unknown error") + " — edit the fields manually.";
     }
   });
 
@@ -494,7 +491,7 @@
   });
   $("cancel-job-btn").addEventListener("click", async () => {
     if (!currentJob) return;
-    if (!confirm("Cancel this job? A running encode stops and any partial output is deleted. Source files are NOT touched.")) return;
+    if (!confirm("Cancel this job? Partial output is deleted. Source files are not touched.")) return;
     const { data } = await api("/api/queue/" + currentJob.id + "/cancel", { method: "POST" });
     if (data && data.ok) { currentJob = data.job; renderJob(); loadQueue(); }
     else alert("Could not cancel: " + ((data && data.message) || "unknown error"));
@@ -554,11 +551,11 @@
     if (ssEl) {
       const ss = data.server_status || {};
       ssEl.textContent = ss.busy
-        ? "🔴 Server: Busy — " + (ss.reason || "high load") + ". Builds wait / pause until it's quiet."
-        : "🟢 Server: Quiet" + (ss.load_summary ? " — " + ss.load_summary : "") + ". Builds run normally.";
+        ? "🔴 Server: Busy — " + (ss.reason || "high load") + "."
+        : "🟢 Server: Quiet" + (ss.load_summary ? " — " + ss.load_summary : "") + ".";
     }
     qlist.innerHTML = "";
-    if (!queue.length) qlist.innerHTML = "<li class='jobrow'>Queue is empty — pick folders in Browse to fill it.</li>";
+    if (!queue.length) qlist.innerHTML = "<li class='jobrow'>Queue is empty — pick folders in Browse.</li>";
     queue.forEach((j) => {
       const li = document.createElement("li");
       li.className = "jobrow";
@@ -569,7 +566,7 @@
         + "<div class='meta-line'>" + esc(j.created || "") + " · " + (j.files || []).length + " file(s)"
         + (j.output_path ? " · " + esc(j.output_path) : "") + "</div>"
         + (j.status === "failed" && j.error ? "<div class='banner error'><strong>⛔ FAILED:</strong> " + esc(j.error) + "</div>" : "")
-        + (j.paused ? "<div class='banner warn'><strong>⏸ Paused — server busy:</strong> " + esc(j.paused_reason || "waiting for the server to quiet down") + ". Resumes automatically; the % stays frozen until then.</div>" : "")
+        + (j.paused ? "<div class='banner warn'><strong>⏸ Paused — server busy:</strong> " + esc(j.paused_reason || "waiting for the server to quiet down") + ". Resumes automatically.</div>" : "")
         + (j.status === "queued" && j.wait_reason ? "<div class='banner warn'><strong>⏳ Waiting:</strong> " + esc(j.wait_reason) + "</div>" : "")
         + (j.originals_warning ? "<div class='banner warn'><strong>⚠ Done with a warning:</strong> " + esc(j.originals_warning) + "</div>" : "")
         + "<div class='row'><button class='secondary' data-edit='1'>✏️ Edit</button>"
@@ -577,7 +574,7 @@
       li.querySelector("[data-edit]").addEventListener("click", () => { currentJob = j; showTab("job"); renderJob(); loadJobLog(); });
       li.querySelector("[data-cancel]").addEventListener("click", async () => {
         if (j.status === "building") {
-          if (!confirm("Cancel the running encode for '" + title + "'? Partial output is deleted; source files are NOT touched.")) return;
+          if (!confirm("Cancel the running encode? Partial output is deleted; source files are not touched.")) return;
           await api("/api/queue/" + j.id + "/cancel", { method: "POST" });
         } else {
           await api("/api/queue/" + j.id, { method: "DELETE" });
@@ -594,7 +591,7 @@
       const title = (j.metadata && j.metadata.title) || j.folder;
       li.innerHTML = "<span class='filename'>" + esc(title) + "</span> "
         + "<span class='badge created'>NEEDS REVIEW</span>"
-        + "<div class='meta-line'>" + (j.files || []).length + " file(s) — check the order, then confirm to queue it.</div>"
+        + "<div class='meta-line'>" + (j.files || []).length + " file(s) — check the order, then confirm.</div>"
         + "<div class='row'><button class='secondary' data-open='1'>📖 Review &amp; confirm</button>"
         + "<button class='danger' data-clear='1'>✕ Clear</button></div>";
       li.querySelector("[data-open]").addEventListener("click", () => { currentJob = j; showTab("job"); renderJob(); });
@@ -662,7 +659,7 @@
       ? reviewData.length + " book(s) waiting for a decision · Review folder: " + (data.review_dir || "(not set)")
       : "";
     list.innerHTML = "";
-    if (!reviewData.length) list.innerHTML = "<li class='jobrow'>Nothing waiting for review — every finished file passed its health check.</li>";
+    if (!reviewData.length) list.innerHTML = "<li class='jobrow'>Nothing waiting for review.</li>";
     reviewData.forEach((j) => {
       const h = j.health_report || j.health || {};
       const title = (j.metadata && j.metadata.title) || j.folder;
@@ -677,18 +674,17 @@
         + (h.limited ? " · <em>limited check — no metadata runtime</em>" : "") + "</div>"
         + "<div class='meta-line'>Held file: " + esc(j.review_path || "(unknown)") + "</div>"
         + "<div class='meta-line'>Would go to: " + esc(j.output_path || "(unknown)") + "</div>"
-        + "<div class='banner warn'><strong>What the health check thinks is wrong:</strong><ul>"
+        + "<div class='banner warn'><strong>Health check:</strong><ul>"
         + ((h.diagnoses || ["No details in this report."]).map((d) => "<li>" + esc(d) + "</li>").join("")) + "</ul></div>"
         + healthTable(h)
-        + "<div class='row'><button data-approve='1'>✓ Looks OK — place in Plex</button>"
-        + "<button class='danger' data-reject='1'>🗑 Reject — delete held file</button>"
-        + "<button class='secondary' data-rerun='1'>↻ Re-run health check</button></div>"
-        + "<p class='meta-line'>Originals stay in their source folder while the file is held — approving moves them to Processed; rejecting only deletes the held .m4b, never the sources.</p>";
+        + "<div class='row'><button data-approve='1'>✓ Approve</button>"
+        + "<button class='danger' data-reject='1'>🗑 Reject</button>"
+        + "<button class='secondary' data-rerun='1'>↻ Re-run</button></div>";
       li.querySelector("[data-approve]").addEventListener("click", () => openReviewModal(j, "approve"));
       li.querySelector("[data-reject]").addEventListener("click", () => openReviewModal(j, "reject"));
       li.querySelector("[data-rerun]").addEventListener("click", async () => {
         const { data: rdata } = await api("/api/jobs/" + j.id + "/health/rerun", { method: "POST" });
-        if (rdata && rdata.ok) { $("review-msg").textContent = "✓ Health check re-run: " + (rdata.health.verdict || "?").toUpperCase() + " — still held until you approve or reject it."; loadReview(); loadHealth(); }
+        if (rdata && rdata.ok) { $("review-msg").textContent = "✓ Re-run: " + (rdata.health.verdict || "?").toUpperCase() + " — still held."; loadReview(); loadHealth(); }
         else $("review-msg").textContent = "✕ Re-run failed: " + ((rdata && rdata.error) || "unknown error");
       });
       list.appendChild(li);
@@ -701,14 +697,14 @@
     const confirmBtn = $("review-modal-confirm");
     if (action === "approve") {
       $("review-modal-title").textContent = "✓ Approve — place in Plex?";
-      $("review-modal-summary").innerHTML = "This moves <strong>" + esc(title) + "</strong> from the Review folder into Plex at:<br><code>"
-        + esc(job.output_path || "(unknown)") + "</code><br>Your approval is recorded on the job, including what the health check flagged. Only now do the originals move to Processed.";
+      $("review-modal-summary").innerHTML = "Move <strong>" + esc(title) + "</strong> into Plex at:<br><code>"
+        + esc(job.output_path || "(unknown)") + "</code><br>Originals move to Processed now.";
       confirmBtn.textContent = "✓ Yes, place it in Plex";
       confirmBtn.classList.remove("danger");
     } else {
       $("review-modal-title").textContent = "🗑 Reject — delete the held file?";
-      $("review-modal-summary").innerHTML = "This deletes the held file <strong>" + esc(title) + "</strong>:<br><code>"
-        + esc(job.review_path || "(unknown)") + "</code><br>The originals stay in their <strong>original source folder</strong> so you can re-process the book from there. This cannot be undone.";
+      $("review-modal-summary").innerHTML = "Delete the held file <strong>" + esc(title) + "</strong>:<br><code>"
+        + esc(job.review_path || "(unknown)") + "</code><br>Originals stay in their source folder. This cannot be undone.";
       confirmBtn.textContent = "✓ Yes, delete the held file";
       confirmBtn.classList.add("danger");
     }
@@ -729,8 +725,8 @@
     $("review-modal").classList.add("hidden");
     if (data && data.ok) {
       $("review-msg").textContent = reviewAction.action === "approve"
-        ? "✓ Placed in Plex. Rescan the Plex audiobook library to see it."
-        : "✓ Held file deleted. The originals are still in their source folder if you want to re-process.";
+        ? "✓ Placed in Plex."
+        : "✓ Held file deleted.";
     } else {
       $("review-msg").textContent = "✕ " + ((data && data.error) || "unknown error");
     }
@@ -777,7 +773,7 @@
         + "job " + esc(item.job_date || "") + "</div>"
         + "<div class='meta-line'>Processed: " + esc(item.processed_path) + "</div>"
         + "<div class='meta-line'>Finished: " + esc(item.output_path) + "</div>"
-        + "<div class='row'><button class='secondary' data-keep='1'>✕ Keep — take off the delete list</button></div>";
+        + "<div class='row'><button class='secondary' data-keep='1'>✕ Keep</button></div>";
       li.querySelector("[data-keep]").addEventListener("click", async () => {
         await api("/api/cleanup/keep", { method: "POST", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({ processed_path: item.processed_path, keep: true }) });
@@ -809,7 +805,7 @@
       li.className = "jobrow";
       li.innerHTML = "<span class='filename'>" + esc(item.title) + "</span>"
         + " <span class='meta-line'>" + fmtBytes(item.processed_size) + " · kept</span>"
-        + "<div class='row'><button class='secondary' data-unkeep='1'>↩ Un-keep — back on the delete list if still safe</button></div>";
+        + "<div class='row'><button class='secondary' data-unkeep='1'>↩ Un-keep</button></div>";
       li.querySelector("[data-unkeep]").addEventListener("click", async () => {
         await api("/api/cleanup/keep", { method: "POST", headers: {"Content-Type": "application/json"},
           body: JSON.stringify({ processed_path: item.processed_path, keep: false }) });
@@ -828,9 +824,9 @@
   $("cleanup-delete").addEventListener("click", () => {
     if (!cleanupData || !cleanupData.safe.length) return;
     const total = fmtBytes(cleanupData.total_reclaimable_bytes);
-    $("delete-summary").innerHTML = "This will delete <strong>" + cleanupData.safe.length
+    $("delete-summary").innerHTML = "Delete <strong>" + cleanupData.safe.length
       + " book(s)</strong>, freeing <strong>" + total + "</strong>. "
-      + "Only the processed source files listed below — the finished .m4b files stay in Plex.";
+      + "Only the listed source files — finished .m4b files stay in Plex.";
     const list = $("delete-list");
     list.innerHTML = "";
     cleanupData.safe.forEach((item) => {
@@ -881,11 +877,11 @@
         + (j.status === "queued" && j.wait_reason ? "<div class='banner warn'><strong>⏳ Waiting:</strong> " + esc(j.wait_reason) + "</div>" : "")
         + (j.originals_warning ? "<div class='banner warn'><strong>⚠ Done with a warning:</strong> " + esc(j.originals_warning) + "</div>" : "")
         + (j.status === "cancelled" && j.cancelled_reason ? "<div class='meta-line'>✕ Cancelled: " + esc(j.cancelled_reason) + "</div>" : "")
-        + (j.status === "needs_health_review" && j.health ? "<div class='banner warn'><strong>🔍 HELD FOR HEALTH REVIEW:</strong> expected "
+        + (j.status === "needs_health_review" && j.health ? "<div class='banner warn'><strong>🔍 Held for health review:</strong> expected "
           + esc(j.health.expected_total || "?") + ", got " + esc(j.health.actual_total || "?")
           + (j.health.missing ? " — " + esc(j.health.missing) + " missing" : "")
-          + ". Open it in the Review tab to approve or reject it.</div>" : "")
-        + (j.status === "rejected" ? "<div class='meta-line'>🗑 Rejected — held file deleted; originals stay in their source folder.</div>" : "")
+          + ".</div>" : "")
+        + (j.status === "rejected" ? "<div class='meta-line'>🗑 Rejected — held file deleted.</div>" : "")
         + "<div class='row'><button class='secondary'>Open</button>"
         + "<a href='/logs/" + j.id + "/text' target='_blank'><button class='secondary' type='button'>📄 Plain-text log</button></a>"
         + (j.status === "building"
@@ -1012,7 +1008,7 @@
         plex_url: $("s-plex-url").value, plex_token: $("s-plex-token").value,
         run_start: $("s-run-start").value, run_end: $("s-run-end").value }) });
     if (data && data.ok) {
-      $("settings-msg").textContent = "✓ Saved." + ((data.startup_errors || []).length ? " But startup still reports errors — see the banner at the top." : "");
+      $("settings-msg").textContent = "✓ Saved." + ((data.startup_errors || []).length ? " Startup errors remain — see the banner." : "");
       loadSettings();
     } else {
       const errs = (data && data.errors) || [{ message: (data && data.error) || "unknown error" }];
@@ -1027,7 +1023,7 @@
       body: JSON.stringify({ plex_url: $("s-plex-url").value, plex_token: $("s-plex-token").value }) });
     if (data && data.ok) {
       msg.textContent = "✓ Connected: " + data.sessions + " playing, " + data.transcodes + " transcoding"
-        + (data.busy ? " — Cadence would back off right now." : " — quiet.");
+        + (data.busy ? " — backing off." : " — quiet.");
     } else {
       msg.textContent = "✕ " + ((data && data.error) || "connection failed");
     }

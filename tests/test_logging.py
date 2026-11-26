@@ -20,6 +20,8 @@ import sys
 import tempfile
 import time
 
+import pytest
+
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import cadence_logging as flog
@@ -138,6 +140,23 @@ def test_job_with_corrupt_mp3_is_marked_failed_not_done(tmp_path, monkeypatch):
     log_text = client.get(
         f"/api/jobs/{job['id']}/log?format=text").get_data(as_text=True)
     assert "FAILED" in log_text and "Empty" in log_text
+
+
+def test_init_logging_permission_error_names_the_host_fix(tmp_path, monkeypatch, capsys):
+    """First-install bug: host ./data owned by root, container runs
+    as 1000 — init_logging must print the exact host fix in
+    `docker logs` instead of only a bare traceback, and still
+    fail fast (never pretend to run without logging)."""
+    def _boom(_path):
+        raise PermissionError(13, "Permission denied",
+                              str(tmp_path / "data" / "logs"))
+    monkeypatch.setattr(flog, "log_dir", _boom)
+    with pytest.raises(PermissionError):
+        flog.init_logging(str(tmp_path / "data"))
+    out = capsys.readouterr().out
+    assert "chown" in out, out
+    assert "docker compose down" in out, out
+    assert "install.sh" in out, out
 
 
 def test_pasteable_log_has_summary_block_and_last_error(tmp_path):

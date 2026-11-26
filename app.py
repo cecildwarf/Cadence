@@ -308,13 +308,13 @@ def mount_info() -> list[dict]:
     info: list[dict] = []
     root = mounted_root()
     if root:
-        info.append({"label": "Media root (mounted folders)",
+        info.append({"label": "Media root",
                      "path": root,
                      "source": _proc_mount_source(root),
                      "exists": os.path.isdir(root),
                      "readable": os.access(root, os.R_OK),
                      "writable": os.access(root, os.W_OK)})
-    info.append({"label": "App data (jobs, logs, settings)",
+    info.append({"label": "App data",
                  "path": os.path.realpath(DATA_DIR),
                  "source": _proc_mount_source(DATA_DIR),
                  "exists": os.path.isdir(DATA_DIR),
@@ -342,20 +342,16 @@ def validate_paths(inbox: str, output: str, create_output: bool = False) -> list
         return errors
     if not inbox:
         errors.append({"field": "inbox_dir",
-                       "message": "Choose an inbox (input) folder — "
-                                  "where messy audiobook folders land."})
+                       "message": "Choose an inbox folder."})
     elif not os.path.isdir(inbox):
         errors.append({"field": "inbox_dir",
-                       "message": f"Inbox folder does not exist: {inbox}. "
-                                  f"Pick an existing folder on the server."})
+                       "message": f"Inbox folder does not exist: {inbox}."})
     elif not os.access(inbox, os.R_OK):
         errors.append({"field": "inbox_dir",
-                       "message": f"Inbox folder is not readable: {inbox}. "
-                                  f"Check ownership/permissions."})
+                       "message": f"Inbox folder is not readable: {inbox}."})
     if not output:
         errors.append({"field": "output_dir",
-                       "message": "Choose an output folder — your Plex "
-                                  "audiobook library folder."})
+                       "message": "Choose a Plex library folder."})
     elif not os.path.isdir(output):
         parent = os.path.dirname(output.rstrip("/")) or "/"
         if create_output and os.path.isdir(parent) and os.access(parent, os.W_OK):
@@ -369,11 +365,10 @@ def validate_paths(inbox: str, output: str, create_output: bool = False) -> list
             errors.append({"field": "output_dir",
                            "message": f"Output folder does not exist: {output}. "
                                       f"Pick an existing folder, or tick "
-                                      f"'Create it if missing'."})
+                                      f"'Create output folder if missing'."})
     elif not os.access(output, os.W_OK):
         errors.append({"field": "output_dir",
-                       "message": f"Output folder is not writable: {output}. "
-                                  f"Check ownership/permissions."})
+                       "message": f"Output folder is not writable: {output}."})
     return errors
 
 
@@ -414,9 +409,8 @@ def settings_path_errors(settings: dict | None = None) -> list[dict]:
     output = (s.get("output_dir") or "").strip()
     if review and output and _is_inside(output, review):
         errors.append({"field": "review_dir",
-                       "message": "Review folder must be OUTSIDE the Plex "
-                                  f"output folder ({output}) — otherwise Plex "
-                                  f"would scan held, unchecked files."})
+                       "message": "Review folder must be outside the Plex "
+                                  f"library folder ({output})."})
     return errors
 
 
@@ -431,8 +425,7 @@ def setup_status(settings: dict | None = None) -> dict:
         ZoneInfo(tz)
     except Exception:
         errors.append({"field": "timezone",
-                       "message": f"Unknown timezone: {tz}. Pick a valid "
-                                  f"timezone name (e.g. UTC)."})
+                       "message": f"Unknown timezone: {tz} — pick a valid name."})
     return {"setup_required": bool(errors), "setup_errors": errors}
 
 
@@ -457,8 +450,7 @@ def run_startup_checks() -> list[dict]:
     for tool in ("ffmpeg", "ffprobe"):
         if shutil.which(tool) is None:
             errors.append({"code": "missing_tool", "path": tool,
-                           "message": f"{tool} not found in PATH. The Docker image installs it; "
-                                      f"if you installed without Docker, install ffmpeg first."})
+                           "message": f"{tool} not found in PATH — install ffmpeg."})
             flog.log_error(None, "startup", f"Missing tool: {tool}", outcome="FAIL")
         else:
             flog.log_info(None, "startup", f"{tool} found: {shutil.which(tool)}", outcome="pass")
@@ -1417,21 +1409,21 @@ def folder_suggestions():
         seen.add(cand)
         base = os.path.basename(cand.rstrip("/")).lower()
         if base in ("in", "inbox", "input"):
-            label = "Inbox (input) folder"
+            label = "Inbox folder"
         elif base in ("out", "output", "audiobooks"):
-            label = "Audiobooks library folder"
+            label = "Plex library folder"
         elif base == "review":
-            label = "Review folder (health-held files)"
+            label = "Review folder"
         elif base == "processed":
-            label = "Processed folder (originals)"
+            label = "Processed folder"
         else:
             label = "Folder on this server"
         suggestions.append({"path": cand, "label": label})
     if root:
         suggestions.append({"path": root,
-                            "label": "Mounted media root — browse from here"})
+                            "label": "Media root"})
     else:
-        suggestions.append({"path": "/", "label": "Server root — browse from here"})
+        suggestions.append({"path": "/", "label": "Server root"})
     return jsonify({"ok": True, "suggestions": suggestions,
                     "mounted_root": root or ""})
 

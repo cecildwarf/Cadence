@@ -61,6 +61,8 @@ Port `8285` by default. If it's taken, set `PORT=8286` in `.env` and restart.
 
 A failed job says exactly why in the UI (file, step, ffmpeg error) — never just "something went wrong". For help, Logs tab → pick the job → **Copy log** → paste it in chat. Or on the server: `docker logs cadence --tail 50`.
 
+Container restart-looping with `Permission denied: '/app/data/logs'`? The host `./data` folder was created owned by root — fix it with `docker compose down && sudo chown -R 1000:1000 ./data && docker compose up -d --build` (or just run `bash install.sh` / `bash update.sh` — they fix the ownership first).
+
 ## Develop / test
 
 ```bash

@@ -83,21 +83,45 @@ def init_logging(data_dir: str) -> logging.Logger:
     """Initialise (or re-initialise) the global rotating log."""
     global _global_logger, _data_dir
     _data_dir = data_dir
-    d = log_dir(data_dir)
+    try:
+        d = log_dir(data_dir)
+        handler = RotatingFileHandler(
+            os.path.join(d, GLOBAL_LOG),
+            maxBytes=10 * 1024 * 1024,  # 10 MB
+            backupCount=30,             # keep at least 30 days of rotations
+            encoding="utf-8",
+        )
+        handler.setFormatter(logging.Formatter(
+            "%(asctime)s | %(levelname)-5s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
+        ))
+    except PermissionError as exc:
+        # The classic first-install failure: Docker creates a missing
+        # bind-mount folder (./data) as root, but the container runs
+        # as a non-root user, so it cannot write its logs and
+        # restart-loops. The raw traceback alone does not say what
+        # to fix — print the host fix plainly in `docker logs`
+        # (still raising, so the container fails fast instead of
+        # pretending to run without logging).
+        uid, gid = os.getuid(), os.getgid()
+        print(
+            "Cadence cannot write to its data directory "
+            f"{os.path.join(data_dir, LOG_DIR_NAME)!r}: {exc}. "
+            "The host ./data folder is probably owned by root "
+            "(Docker creates a missing bind-mount folder as root) "
+            f"but this container runs as {uid}:{gid}. "
+            "On the host, run: docker compose down && "
+            f"sudo chown -R {uid}:{gid} ./data && "
+            "docker compose up -d --build "
+            "(or run bash install.sh / bash update.sh, which fix "
+            "the ownership first).",
+            flush=True,
+        )
+        raise
     logger = logging.getLogger("cadence")
     logger.setLevel(logging.DEBUG)
     logger.handlers.clear()
     logger.propagate = False
 
-    handler = RotatingFileHandler(
-        os.path.join(d, GLOBAL_LOG),
-        maxBytes=10 * 1024 * 1024,  # 10 MB
-        backupCount=30,             # keep at least 30 days of rotations
-        encoding="utf-8",
-    )
-    handler.setFormatter(logging.Formatter(
-        "%(asctime)s | %(levelname)-5s | %(message)s", datefmt="%Y-%m-%d %H:%M:%S"
-    ))
     logger.addHandler(handler)
 
     # Also log to the container stdout so `docker logs` shows it.

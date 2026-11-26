@@ -9,9 +9,6 @@
 <body>
 <header>
   <h1>🎵 Cadence</h1>
-  <p>MP3s in, one Plex-ready .m4b out — sorted first, then merged.</p>
-  <p class="hint">Your phone is a remote control here: this app browses folders
-  <strong>on the server</strong>. No file upload from your phone is needed.</p>
 </header>
 
 <nav class="tabs" aria-label="Sections">
@@ -32,11 +29,8 @@
 
   <!-- BROWSE -->
   <section class="card" id="tab-browse">
-    <h2>1 · Choose book folders or files</h2>
-    <p class="hint">Folders under the inbox (<span id="inbox-path">…</span>).
-    Files are read on the server — nothing uploads from this device.</p>
-    <p class="hint"><strong>How it queues:</strong> 1 file → queued automatically, no review.
-    More than 1 file → review the order first. Empty folder → no job, you'll be told why.</p>
+    <h2>Browse</h2>
+    <p class="meta-line">Inbox: <span id="inbox-path">…</span></p>
     <div class="row">
       <button id="browse-up" class="secondary">⬆ Up</button>
       <button id="browse-refresh" class="secondary">↻ Refresh</button>
@@ -53,10 +47,7 @@
 
   <!-- QUEUE -->
   <section class="card hidden" id="tab-queue">
-    <h2>Queue — one build at a time</h2>
-    <p class="hint">Books build in order, one at a time, so a small server never
-    runs two encodes at once. Every row shows live progress: a bar, a % and the current stage.
-    Tap <strong>Edit</strong> to fix a queued book's title or order before it starts.</p>
+    <h2>Queue</h2>
     <div class="row">
       <button id="queue-refresh" class="secondary">↻ Refresh</button>
       <button id="clear-finished" class="secondary">🧹 Clear finished</button>
@@ -67,21 +58,12 @@
     <h3>Building / queued</h3>
     <ul class="clean" id="queue-list"></ul>
     <h3>Needs order review</h3>
-    <p class="hint">Multi-file books land here first — open one, check the auto-sort, then confirm to join the queue.</p>
     <ul class="clean" id="review-list"></ul>
   </section>
 
   <!-- HEALTH REVIEW -->
   <section class="card hidden" id="tab-review">
-    <h2>🔍 Review — health-held books</h2>
-    <p class="hint">After every build, Cadence checks the finished file against
-    the book's published length and chapter list. A file that fails or looks
-    wrong never goes to Plex — it waits here, in the Review folder, until you
-    decide. <strong>Approve</strong> places it in Plex anyway (and records
-    what you overrode) — only then do the originals move to Processed.
-    <strong>Reject</strong> deletes the held file — the originals stay
-    in their original source folder, so you can re-process the book
-    from there.</p>
+    <h2>🔍 Review</h2>
     <div class="row">
       <button id="review-refresh" class="secondary">↻ Refresh</button>
     </div>
@@ -91,11 +73,7 @@
 
   <!-- CLEANUP -->
   <section class="card hidden" id="tab-cleanup">
-    <h2>Cleanup — free disk space, safely</h2>
-    <p class="hint">Processed originals are only listed as safe to delete when the finished
-    .m4b exists in Plex, plays fine, matches the originals' length within 2%, and its job
-    finished Done. Anything unsure lands in "Needs review" with the reason why — never on the
-    delete list. Nothing is deleted until you confirm.</p>
+    <h2>Cleanup</h2>
     <p class="hint"><strong>Reclaimable: <span id="cleanup-total">…</span></strong></p>
     <div class="row">
       <button id="cleanup-refresh" class="secondary">↻ Refresh list</button>
@@ -110,17 +88,13 @@
     <h3>Needs review — not safe to delete</h3>
     <ul class="clean" id="cleanup-review-list"></ul>
     <h3>Kept items</h3>
-    <p class="hint">Books you chose to keep — they stay in Processed and never appear on the delete list until you un-keep them.</p>
     <ul class="clean" id="cleanup-kept-list"></ul>
   </section>
 
   <!-- CURRENT BOOK / JOB -->
   <section class="card hidden" id="tab-job">
-    <h2>2 · Review order &amp; metadata</h2>
-    <p class="hint">Auto-sort did its best guess below. <strong>Check it, then fix anything wrong
-    before you build</strong> — drag a row (mouse), or use the ↑ ↓ buttons or “move to #” on your phone.
-    Buttons always work; drag is optional.</p>
-    <div id="job-empty"><p class="hint">No book picked yet — choose a folder in Browse first, or open a queued book from the Queue tab.</p></div>
+    <h2>Review order</h2>
+    <div id="job-empty"><p class="hint">No book picked yet — choose a folder in Browse.</p></div>
     <div id="job-body" class="hidden">
       <p id="job-title" class="filename"></p>
       <p id="job-status" class="meta-line"></p>
@@ -133,7 +107,7 @@
       <div id="sort-warnings"></div>
 
       <h3>Metadata</h3>
-      <label for="asin">ASIN (Audible ID, e.g. B0C5NYVMW4)</label>
+      <label for="asin">ASIN</label>
       <div class="row">
         <input id="asin" placeholder="B0…" autocomplete="off">
         <button id="lookup-btn">🔍 Look up</button>
@@ -157,7 +131,7 @@
       <h3>Files — confirmed order (<span id="file-count">0</span>)</h3>
       <ul class="clean" id="file-list"></ul>
       <div class="row">
-        <button id="build-btn">🔨 Build .m4b (joins the queue)</button>
+        <button id="build-btn">🔨 Build .m4b</button>
         <button id="cancel-job-btn" class="danger hidden">✕ Cancel this job</button>
         <button id="refresh-job-btn" class="secondary">↻ Refresh status</button>
       </div>
@@ -175,7 +149,6 @@
   <!-- JOBS -->
   <section class="card hidden" id="tab-jobs">
     <h2>Jobs</h2>
-    <p class="hint">Every job, newest first. A failed job shows its exact reason here — tap it for the full log. Use ✕ to clear a job from the list (never deletes source files or finished books).</p>
     <div class="row">
       <button id="jobs-refresh" class="secondary">↻ Refresh</button>
       <button id="jobs-clear-finished" class="secondary">🧹 Clear finished</button>
@@ -186,8 +159,6 @@
   <!-- LOGS -->
   <section class="card hidden" id="tab-logs">
     <h2>Logs</h2>
-    <p class="hint">Logs live on the server under <code>data/logs/</code> and survive restarts.
-    <strong>Copy</strong> is the fastest way to send one from your phone — paste it straight into chat.</p>
     <div class="row">
       <select id="log-job-select" aria-label="Choose job log"></select>
       <button id="log-load" class="secondary">Load log</button>
@@ -204,99 +175,69 @@
       <a id="text-log-link" href="/logs/app/text" target="_blank"><button class="secondary" type="button">📄 Plain-text view</button></a>
       <button id="download-log" class="secondary">⬇ Download .log</button>
     </div>
-    <pre class="log" id="log-view">Pick a job log (or the global log) above.</pre>
+    <pre class="log" id="log-view">Pick a log above.</pre>
     <p id="copy-msg" class="hint" role="status"></p>
   </section>
 
   <!-- SETTINGS -->
   <section class="card hidden" id="tab-settings">
     <h2>Settings</h2>
-    <p class="hint">Saved to <code>data/settings.json</code> on the server. Paths are server paths, not this device's.</p>
-    <p class="hint"><strong>Current paths</strong><br>
-    Inbox: <code id="cur-inbox">…</code><br>
+    <p class="meta-line">Inbox: <code id="cur-inbox">…</code><br>
     Output: <code id="cur-output">…</code></p>
-    <p class="hint"><strong>Mounted folders — what this container can actually see</strong><br>
-    <span id="mounts-list">Loading…</span><br>
-    A running container can't gain a new host folder from Settings — mounts are fixed when it
-    starts. This container mounts one media folder (<code>MEDIA_ROOT</code> — an optional
-    <code>.env</code> override, otherwise the host's <code>/disks</code> — shown above). You can
-    change inbox/output/Processed/Review here, no restart, as long as the
-    new folder is under that mounted folder. A folder outside it is rejected, with a message
-    telling you to change <code>MEDIA_ROOT</code> and run <code>docker compose up -d</code>.</p>
-    <label for="s-inbox">Inbox folder — where messy audiobook folders land (server path)</label>
+    <p class="meta-line"><strong>Mounted folders</strong><br>
+    <span id="mounts-list">Loading…</span></p>
+    <label for="s-inbox">Inbox folder</label>
     <div class="row picker-row">
       <input id="s-inbox" placeholder="/disks/Audiobooks/Inbox">
       <button class="secondary" data-picker="s-inbox" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-inbox" class="chips"></div>
-    <label for="s-output">Plex audiobook library folder — finished .m4b files go here (server path)</label>
+    <label for="s-output">Plex library folder</label>
     <div class="row picker-row">
       <input id="s-output" placeholder="/disks/Audiobooks">
       <button class="secondary" data-picker="s-output" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-output" class="chips"></div>
-    <label class="checkrow"><input type="checkbox" id="s-create-output"> Create the output folder if it doesn't exist yet</label>
-    <p class="hint">Changing the output folder only affects future builds — books already placed stay where they are.</p>
-    <label for="s-processed">Processed folder — finished books' original files are moved here (server path)</label>
+    <label class="checkrow"><input type="checkbox" id="s-create-output"> Create output folder if missing</label>
+    <label for="s-processed">Processed folder</label>
     <div class="row picker-row">
       <input id="s-processed" placeholder="<inbox>/Processed">
       <button class="secondary" data-picker="s-processed" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-processed" class="chips"></div>
-    <p class="hint">Leave empty for the default: a <code>Processed</code> folder inside your inbox.
-    Layout inside: <code>Processed/&lt;Author&gt;/&lt;Book&gt;/</code> with the original filenames kept.
-    Nothing moves here until a book is successfully in Plex — a failed, cancelled, held, or
-    rejected book leaves its originals in the source folder. To re-process a book that
-    failed or was held, start it again from its source folder; a book that already
-    succeeded lives under Processed.</p>
-    <label for="s-review">Review folder — health-held files wait here for your decision (server path)</label>
+    <label for="s-review">Review folder (outside Plex)</label>
     <div class="row picker-row">
       <input id="s-review" placeholder="<inbox>/Review">
       <button class="secondary" data-picker="s-review" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-review" class="chips"></div>
-    <p class="hint">Leave empty for the default: a <code>Review</code> folder inside your inbox,
-    next to Processed. It must stay <strong>outside</strong> your Plex output folder, or Plex
-    would scan held, unchecked files. Approve moves a held file into Plex; Reject deletes it.</p>
     <label for="s-temp">Temp folder</label><input id="s-temp">
     <label for="s-bitrate">AAC bitrate</label>
     <select id="s-bitrate"><option>64k</option><option>96k</option><option>128k</option></select>
-    <label for="s-audnexus">Audnexus mirror URL</label><input id="s-audnexus">
-    <label for="s-tz">Timezone (for log timestamps, e.g. UTC)</label>
+    <label for="s-audnexus">Audnexus URL</label><input id="s-audnexus">
+    <label for="s-tz">Timezone</label>
     <input id="s-tz" placeholder="UTC" autocomplete="off">
     <div id="suggest-tz" class="chips"></div>
-    <label for="s-keep">Original files after a successful build</label>
+    <label for="s-keep">Original files after build</label>
     <select id="s-keep">
-      <option value="processed">Move to Processed/&lt;Author&gt;/&lt;Book&gt;/ (default)</option>
+      <option value="processed">Move to Processed folder</option>
       <option value="keep">Keep in place</option>
     </select>
-    <p class="hint">Originals are never deleted automatically at build time — deleting processed
-    originals only happens from 🧹 Cleanup, after the safety checks, and only when you confirm.</p>
-    <h3>When to run — back off when the server is busy</h3>
-    <p class="hint">Cadence watches the server and works when it's quiet. If the load gets high
-    or Plex starts transcoding, queued books wait and a running encode pauses (its % freezes)
-    until things have been quiet for a while — then it carries on where it stopped. Nothing is
-    lost and the job is never marked failed for pausing.</p>
-    <label class="checkrow"><input type="checkbox" id="s-backoff" checked> Pause builds when the server gets busy (on by default)</label>
-    <label for="s-load-threshold">Busy when the 1-minute load is above this % of the server's CPU cores</label>
+    <h3>When to run</h3>
+    <label class="checkrow"><input type="checkbox" id="s-backoff" checked> Pause builds when the server is busy</label>
+    <label for="s-load-threshold">Pause above this load (% of CPU cores)</label>
     <input id="s-load-threshold" type="number" min="10" max="100" step="5" value="70">
-    <label for="s-quiet-grace">Quiet time before a paused build resumes (seconds)</label>
+    <label for="s-quiet-grace">Resume after quiet (seconds)</label>
     <input id="s-quiet-grace" type="number" min="0" max="3600" step="30" value="120">
-    <label for="s-backoff-check">How often to check the server (seconds)</label>
+    <label for="s-backoff-check">Check server every (seconds)</label>
     <input id="s-backoff-check" type="number" min="10" max="300" step="10" value="30">
-    <label for="s-plex-url">Plex server URL (optional — lets Cadence see Plex transcodes)</label>
+    <label for="s-plex-url">Plex server URL (optional)</label>
     <input id="s-plex-url" placeholder="http://<server-ip>:32400" autocomplete="off">
-    <label for="s-plex-token">Plex token (optional — stored on the server, never shown in full)</label>
+    <label for="s-plex-token">Plex token (optional)</label>
     <input id="s-plex-token" type="password" autocomplete="off" placeholder="Leave blank if already saved">
     <div class="row"><button id="plex-test" class="secondary" type="button">🔌 Test Plex connection</button><span id="plex-test-msg" class="hint"></span></div>
-    <p class="hint">Direct play doesn't count — only active Plex transcodes make Cadence back off.
-    Without a Plex URL, the server load alone decides. Find the token in Plex Web: open a library
-    item's XML view, or use the token from your Plex settings — it stays on this server.</p>
-    <label for="s-run-start">Only run between — optional backup (leave empty to run any time)</label>
+    <label for="s-run-start">Only run between (optional)</label>
     <div class="row"><input id="s-run-start" type="time"> <span>to</span> <input id="s-run-end" type="time"></div>
-    <p class="hint">Outside these hours builds wait in the queue. Inside them, the busy rules above
-    still apply. Uses the timezone above. If the load check ever stops working, this schedule
-    alone decides when builds run.</p>
     <div class="row"><button id="save-settings">💾 Save settings</button></div>
     <p id="settings-msg" class="hint"></p>
   </section>
@@ -305,47 +246,38 @@
 <!-- FIRST-RUN SETUP WIZARD -->
 <div id="setup-wizard" class="wizard hidden" role="dialog" aria-modal="true" aria-labelledby="setup-title">
   <div class="wizard-card">
-    <h2 id="setup-title">👋 First, where are your audiobooks?</h2>
-    <p class="hint">Cadence needs two folders on the server. Pick them once —
-    tap a suggestion, browse the server's folders, or type a path. Nothing is assumed.
-    Both folders must be under the media folder mounted into the container
-    (mounted at <code>/disks</code> — <code>MEDIA_ROOT</code> is an optional <code>.env</code>
-    override if your media lives elsewhere) — the picker
-    only shows folders the container can see, and you can change these folders later in
-    ⚙️ Settings with no restart, as long as the new folder is under that same mount.</p>
+    <h2 id="setup-title">Set up Cadence</h2>
     <div id="setup-errors" class="banner error hidden"></div>
-    <label for="w-inbox">1 · Inbox — where messy audiobook folders land</label>
+    <label for="w-inbox">1 · Inbox folder</label>
     <div class="row picker-row">
       <input id="w-inbox" placeholder="/disks/Audiobooks/Inbox" autocomplete="off">
       <button class="secondary" data-picker="w-inbox" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-w-inbox" class="chips"></div>
-    <label for="w-output">2 · Output — your Plex audiobook library folder</label>
+    <label for="w-output">2 · Plex library folder</label>
     <div class="row picker-row">
       <input id="w-output" placeholder="/disks/Audiobooks" autocomplete="off">
       <button class="secondary" data-picker="w-output" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-w-output" class="chips"></div>
-    <label class="checkrow"><input type="checkbox" id="w-create-output"> Create the output folder if it doesn't exist yet</label>
-    <label for="w-processed">3 · Processed folder (optional) — where finished books' originals are kept</label>
+    <label class="checkrow"><input type="checkbox" id="w-create-output"> Create output folder if missing</label>
+    <label for="w-processed">3 · Processed folder (optional)</label>
     <div class="row picker-row">
       <input id="w-processed" placeholder="Leave empty: <inbox>/Processed" autocomplete="off">
       <button class="secondary" data-picker="w-processed" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-w-processed" class="chips"></div>
-    <label for="w-review">4 · Review folder (optional) — health-held files wait here for your decision</label>
+    <label for="w-review">4 · Review folder (optional, outside Plex)</label>
     <div class="row picker-row">
       <input id="w-review" placeholder="Leave empty: <inbox>/Review" autocomplete="off">
       <button class="secondary" data-picker="w-review" type="button">📂 Browse…</button>
     </div>
     <div id="suggest-w-review" class="chips"></div>
-    <p class="hint">Must stay outside your Plex output folder, or Plex would scan held files.</p>
-    <label for="w-tz">5 · Timezone (for log timestamps)</label>
+    <label for="w-tz">5 · Timezone</label>
     <input id="w-tz" value="UTC" autocomplete="off">
     <div id="suggest-w-tz" class="chips"></div>
-    <p class="hint">You can change all of this later in ⚙️ Settings. The output folder only affects future builds.</p>
     <div class="row">
-      <button id="setup-save">💾 Save &amp; start using Cadence</button>
+      <button id="setup-save">💾 Save &amp; start</button>
       <button id="setup-skip" class="secondary" type="button">Set up later</button>
     </div>
   </div>
@@ -357,7 +289,7 @@
     <h2 id="review-modal-title">🔍 Review decision</h2>
     <p id="review-modal-summary" class="hint"></p>
     <div id="review-modal-diagnoses"></div>
-    <label for="review-modal-note">Note (optional — saved with the decision)</label>
+    <label for="review-modal-note">Note (optional)</label>
     <input id="review-modal-note" placeholder="e.g. Listened to the end of Ch 3, it is all there" autocomplete="off">
     <div class="row">
       <button id="review-modal-confirm" class="danger">✓ Confirm</button>
@@ -372,8 +304,7 @@
     <h2 id="delete-title">🗑 Delete processed originals?</h2>
     <p id="delete-summary" class="hint"></p>
     <ul class="clean" id="delete-list"></ul>
-    <p class="hint">This deletes <strong>only</strong> the processed source files listed above.
-    The finished .m4b files in Plex are <strong>not</strong> touched. This cannot be undone.</p>
+    <p class="hint">Only the listed source files. Finished .m4b files are not touched. This cannot be undone.</p>
     <div class="row">
       <button id="delete-confirm" class="danger">✓ Yes, delete these</button>
       <button id="delete-cancel" class="secondary" type="button">Cancel</button>
@@ -398,7 +329,7 @@
   </div>
 </div>
 
-<footer>Cadence · LAN-only — do not expose to the internet · Logs: data/logs/</footer>
+<footer>Cadence · LAN-only — do not expose to the internet</footer>
 <script src="/static/app.js"></script>
 </body>
 </html>

@@ -9,8 +9,11 @@
 # README lists, with checks and a clear error at each step instead
 # of a silent failure:
 #   1. checks Docker + Docker Compose are installed
-#   2. docker compose up -d --build
-#   3. waits until the app answers on its port, then prints the URL
+#   2. makes ./data owned by the container user (PUID:PGID) — see
+#      ensure_data_dir below; without this the app can't write its
+#      logs and the container restart-loops on "Permission denied"
+#   3. docker compose up -d --build
+#   4. waits until the app answers on its port, then prints the URL
 #
 # No .env file is needed — every setting has a working default and
 # the first-run wizard in the web UI asks for your folders. If you
@@ -20,6 +23,49 @@
 # sure the container is running with the current code.
 set -euo pipefail
 cd "$(dirname "$0")"
+
+# The container runs as PUID:PGID (default 1000:1000), but Docker
+# creates a missing bind-mount folder (./data) as root on first
+# `docker compose up` — then the app cannot write /app/data/logs
+# and the container restart-loops with
+# "Permission denied: '/app/data/logs'". Make ./data exist and
+# owned by the container user *before* compose runs. Idempotent:
+# does nothing when ownership is already right, and never touches
+# the contents of ./data. If the container is already
+# restart-looping on this error, fixing the ownership is enough —
+# the restart policy retries it and the next attempt succeeds.
+ensure_data_dir() {
+    local puid pgid owner
+    puid="${PUID:-}"
+    pgid="${PGID:-}"
+    if [ -f .env ]; then
+        # .env values, like compose's: shell env wins over .env.
+        if [ -z "$puid" ]; then
+            puid="$(grep -E '^PUID=' .env | tail -n 1 | cut -d= -f2- | tr -d ' "')" || true
+        fi
+        if [ -z "$pgid" ]; then
+            pgid="$(grep -E '^PGID=' .env | tail -n 1 | cut -d= -f2- | tr -d ' "')" || true
+        fi
+    fi
+    puid="${puid:-1000}"
+    pgid="${pgid:-1000}"
+    mkdir -p ./data
+    owner="$(stat -c '%u:%g' ./data 2>/dev/null || echo "?")"
+    if [ "$owner" = "${puid}:${pgid}" ]; then
+        return 0
+    fi
+    echo "    ./data is owned by ${owner} but the container runs as ${puid}:${pgid} — fixing ownership..."
+    if [ "$(id -u)" = "0" ]; then
+        chown -R "${puid}:${pgid}" ./data
+    elif sudo chown -R "${puid}:${pgid}" ./data; then
+        :
+    else
+        echo "ERROR: could not change ownership of ./data (owned by ${owner})."
+        echo "Run this on the host, then run this script again:"
+        echo "  sudo chown -R ${puid}:${pgid} ./data"
+        exit 1
+    fi
+}
 
 # Port: $PORT wins, then .env, then the 8285 default.
 PORT="${PORT:-8285}"
@@ -40,6 +86,9 @@ if ! docker compose version >/dev/null 2>&1; then
     exit 1
 fi
 echo "    Docker OK: $(docker --version | head -n 1)"
+
+echo "==> Making sure ./data is writable by the container user..."
+ensure_data_dir
 
 echo "==> Building and starting Cadence (this may take a minute the first time)..."
 docker compose up -d --build

@@ -5,6 +5,11 @@ Forbidden (except the project's own repo home URL, which is the
 one allowed 'cecildwarf' reference, in the README install steps):
   * a specific LAN IP, a specific disk layout, a fixed timezone,
     a specific host machine, a person's name.
+
+One narrow exception: "America/Denver" may appear as one chip
+among several in the timezone *suggestion* list (TZ_CHIPS in
+static/app.js) — it is an option, not a default; the app still
+defaults to UTC. See test_denver_only_as_timezone_chip.
 """
 import os
 import re
@@ -47,12 +52,50 @@ def test_no_hardcoded_personal_or_host_values():
             for lineno, line in enumerate(fh, start=1):
                 for bad in FORBIDDEN:
                     if bad in line:
+                        # Exception: America/Denver as one suggestion
+                        # chip among several in the TZ_CHIPS list —
+                        # an option, not a fixed/default timezone.
+                        if bad in ("Denver", "America/Denver") and \
+                                os.path.basename(path) == "app.js" and \
+                                "TZ_CHIPS" in line:
+                            continue
                         hits.append(f"{os.path.relpath(path, REPO)}:{lineno}: {bad}")
                 if "cecildwarf" in line:
                     # Allowed exactly once: the project's own repo URL.
                     if not re.search(r"github\.com/cecildwarf/cadence", line):
                         hits.append(f"{os.path.relpath(path, REPO)}:{lineno}: cecildwarf")
     assert not hits, "Hardcoded personal/host values found:\n" + "\n".join(hits)
+
+
+def test_denver_only_as_timezone_chip():
+    """America/Denver may appear ONLY as one chip in the timezone
+    suggestion list — never as a default, and nowhere else. The
+    app default timezone stays UTC, and Denver sits among other
+    generic zones (New York, Chicago, Phoenix, Los Angeles...),
+    so it is a choice, not a hardcoded personal setup."""
+    import json
+    hits = []
+    for path in _repo_files():
+        with open(path, encoding="utf-8", errors="ignore") as fh:
+            for lineno, line in enumerate(fh, start=1):
+                if "Denver" in line:
+                    if os.path.basename(path) == "app.js" and \
+                            "TZ_CHIPS" in line:
+                        continue
+                    hits.append(f"{os.path.relpath(path, REPO)}:{lineno}")
+    assert not hits, "Denver outside the timezone chip list:\n" + "\n".join(hits)
+    app_js = open(os.path.join(REPO, "static", "app.js"),
+                  encoding="utf-8").read()
+    m = re.search(r"TZ_CHIPS\s*=\s*(\[[^\]]*\])", app_js)
+    assert m, "TZ_CHIPS list not found in static/app.js"
+    chips = json.loads(m.group(1).replace("'", '"'))
+    assert "America/Denver" in chips
+    assert "America/Phoenix" in chips
+    assert len(chips) >= 6, "chip list shrank — Denver must be an addition, not a replacement"
+    assert "UTC" in chips
+    app_py = open(os.path.join(REPO, "app.py"), encoding="utf-8").read()
+    assert 'os.environ.get("TZ", "UTC")' in app_py, \
+        "default timezone must stay UTC"
 
 
 def test_repo_url_is_the_only_cecildwarf_reference():
